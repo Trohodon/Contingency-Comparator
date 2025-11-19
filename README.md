@@ -50,5 +50,3 @@ Users may modify or extend the parsing or GUI logic to meet specific workflow re
 
 LICENSE
 Open license may be used or defined based on the user’s preference.
-
-END OF FILE
