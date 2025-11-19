@@ -8,6 +8,15 @@ import pandas as pd
 
 TABLE_NAMES = ("ACCA Long Term", "ACCA", "DCwAC")
 
+# canonical name map (strip spaces, lowercase)
+_CANON_NAME_MAP = {
+    "accalongterm": "ACCA Long Term",
+    "accalongterm.": "ACCA Long Term",
+    "accalongterm1": "ACCA Long Term",
+    "acca": "ACCA",
+    "dcwac": "DCwAC",
+}
+
 
 # ───────────────────────── LOADING ───────────────────────── #
 
@@ -25,7 +34,6 @@ def load_workbook(path: str) -> Dict[str, Dict[str, pd.DataFrame]]:
           ...
         }
     """
-    # header=None so we can find the header rows ourselves
     raw_sheets: Dict[str, pd.DataFrame] = pd.read_excel(
         path, sheet_name=None, header=None, engine="openpyxl"
     )
@@ -41,23 +49,30 @@ def load_workbook(path: str) -> Dict[str, Dict[str, pd.DataFrame]]:
     return parsed
 
 
+def _canon(text: str) -> str:
+    return "".join(text.split()).lower()
+
+
 def extract_tables_from_sheet(df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
     """
     Find each block that belongs to "ACCA Long Term", "ACCA", "DCwAC".
 
-    Pattern (based on your screenshot):
+    Pattern:
 
-    Row X-1 : contains table name ("ACCA Long Term", "ACCA", "DCwAC")
+    Row X-1 : may contain a header label ("ACCA Long Term", etc) OR be blank.
     Row X   : first cell is "Contingency Events"
     Row X+1..Y-1 : data rows until a fully blank row
+
+    If the header cell cannot be matched, we assign based on order of
+    appearance (1st block = ACCA Long Term, 2nd = ACCA, 3rd = DCwAC).
     """
     tables: Dict[str, pd.DataFrame] = {}
-
     nrows, ncols = df.shape
 
     def row_is_blank(idx: int) -> bool:
-        # Entire row is NaN -> blank
         return bool(df.iloc[idx, :].isna().all())
+
+    block_index = 0  # 0,1,2...
 
     for i in range(nrows):
         cell0 = df.iloc[i, 0]
@@ -67,32 +82,33 @@ def extract_tables_from_sheet(df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
         if cell0.strip().lower() != "contingency events":
             continue
 
-        # Look one row above for the table name
+        # Try to get table name from header row above
         table_name = None
         if i > 0:
             header_row = df.iloc[i - 1, :]
             for c in range(ncols):
                 val = header_row[c]
                 if isinstance(val, str):
-                    text = val.strip()
-                    for candidate in TABLE_NAMES:
-                        if text.lower() == candidate.lower():
-                            table_name = candidate
-                            break
-                if table_name:
-                    break
+                    name = _CANON_NAME_MAP.get(_canon(val), None)
+                    if name:
+                        table_name = name
+                        break
 
-        if not table_name:
-            # Couldn't match a known table name
-            continue
+        # If header wasn't readable, assign based on order
+        if table_name is None:
+            if block_index < len(TABLE_NAMES):
+                table_name = TABLE_NAMES[block_index]
+            else:
+                # extra blocks – just skip for now
+                block_index += 1
+                continue
 
-        # Determine data region
+        # determine data bounds
         start_data = i + 1
         end_data = start_data
         while end_data < nrows and not row_is_blank(end_data):
             end_data += 1
 
-        # Build DataFrame with row i as header
         header = df.iloc[i, :].tolist()
         block = df.iloc[start_data:end_data, :].copy()
         block.columns = header
@@ -104,6 +120,8 @@ def extract_tables_from_sheet(df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
             )
         else:
             tables[table_name] = block
+
+        block_index += 1
 
     return tables
 
@@ -139,8 +157,6 @@ def compare_tables(
     """
     Compare two tables of the same type from two different sheets.
     """
-
-    # Auto-detect important columns
     c1 = _find_col_by_prefix(table1.columns, "contingency")
     r1 = _find_col_by_prefix(table1.columns, "resulting")
     v1 = _find_col_by_prefix(table1.columns, "contingency value")
@@ -229,4 +245,3 @@ def compare_sheet_pair(
         results[tname] = compare_tables(t1, t2, sheet_left, sheet_right)
 
     return results
-
