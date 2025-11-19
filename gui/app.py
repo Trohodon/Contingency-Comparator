@@ -4,7 +4,6 @@ from __future__ import annotations
 import os
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
-from tkinter import font as tkfont
 
 from .splitscreen import SplitscreenManager
 from .program import excel_logic
@@ -110,10 +109,6 @@ class ComparisonPanel(ttk.LabelFrame):
         super().__init__(parent, text=title)
         self.app = app
 
-        # base font size for this panel
-        self.base_font_size = 9
-        self.row_font = tkfont.Font(family="Segoe UI", size=self.base_font_size)
-
         # top controls (sheet selectors + Compare)
         ctrl = ttk.Frame(self)
         ctrl.pack(side=tk.TOP, fill=tk.X, padx=5, pady=(5, 0))
@@ -135,22 +130,6 @@ class ComparisonPanel(ttk.LabelFrame):
         btn = ttk.Button(ctrl, text="Compare", command=self.do_compare)
         btn.pack(side=tk.LEFT, padx=5)
 
-        # zoom slider
-        zoom_frame = ttk.Frame(self)
-        zoom_frame.pack(side=tk.TOP, fill=tk.X, padx=5, pady=(2, 5))
-
-        ttk.Label(zoom_frame, text="Zoom:").pack(side=tk.LEFT)
-        self.zoom_var = tk.DoubleVar(value=1.0)
-        zoom_slider = ttk.Scale(
-            zoom_frame,
-            from_=0.6,
-            to=1.6,
-            orient="horizontal",
-            variable=self.zoom_var,
-            command=self._on_zoom_changed,
-        )
-        zoom_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(4, 0))
-
         # notebook for tables
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=5, pady=5)
@@ -160,13 +139,6 @@ class ComparisonPanel(ttk.LabelFrame):
             frame = ttk.Frame(self.notebook)
             self.notebook.add(frame, text=tname)
             self.table_views[tname] = self._create_table_widget(frame)
-
-    # ───── zoom handling ───── #
-
-    def _on_zoom_changed(self, *_):
-        factor = float(self.zoom_var.get())
-        size = max(6, int(self.base_font_size * factor))
-        self.row_font.configure(size=size)
 
     # ───── combobox options ───── #
 
@@ -182,7 +154,7 @@ class ComparisonPanel(ttk.LabelFrame):
             else:
                 self.right_sheet_var.set(vals[0])
 
-    # ───── Treeview helpers ───── #
+    # ───── Treeview with scrollbars ───── #
 
     def _create_table_widget(self, parent):
         cols = ("contingency", "issue", "percent_1", "percent_2", "delta_percent", "status")
@@ -203,13 +175,13 @@ class ComparisonPanel(ttk.LabelFrame):
         tree.column("status", width=110, anchor=tk.W)
 
         vsb = ttk.Scrollbar(parent, orient="vertical", command=tree.yview)
-        tree.configure(yscrollcommand=vsb.set)
+        hsb = ttk.Scrollbar(parent, orient="horizontal", command=tree.xview)
+        tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
 
-        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        # layout: tree fills, vsb on right, hsb on bottom
+        tree.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
-
-        # apply font via tag
-        tree.tag_configure("zoom", font=self.row_font)
+        hsb.pack(side=tk.BOTTOM, fill=tk.X)
 
         return tree
 
@@ -236,7 +208,7 @@ class ComparisonPanel(ttk.LabelFrame):
                 fmt(row.get("delta_percent")),
                 str(row.get("status", "")),
             )
-            tree.insert("", tk.END, values=values, tags=("zoom",))
+            tree.insert("", tk.END, values=values)
 
     # ───── compare button ───── #
 
@@ -263,8 +235,7 @@ class ComparisonPanel(ttk.LabelFrame):
             messagebox.showinfo(
                 "No tables",
                 "No matching ACCA Long Term/ACCA/DCwAC tables were found "
-                "on both selected sheets.\n\nCheck the console for 'found tables' "
-                "messages to see what was detected.",
+                "on both selected sheets.",
             )
 
         for tname, tree in self.table_views.items():
