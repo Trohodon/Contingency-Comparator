@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
+from tkinter import font as tkfont
 
 from .splitscreen import SplitscreenManager
 from .program import excel_logic
@@ -21,18 +22,18 @@ class MainApp(tk.Tk):
 
         self._build_top_bar()
 
-        # container that will hold the split-screen frames
+        # container for split-screen frames
         self.center_container = ttk.Frame(self)
         self.center_container.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
         self.split_manager = SplitscreenManager(self.center_container)
         self.comparison_panels: list[ComparisonPanel] = []
 
-        # start with 2 panels by default
+        # default = 2 panels
         self.num_panels_var.set(2)
         self._rebuild_panels(2)
 
-    # ───────────────────────── Top controls ───────────────────────── #
+    # ───────────────── top bar ───────────────── #
 
     def _build_top_bar(self):
         bar = ttk.Frame(self)
@@ -44,17 +45,19 @@ class MainApp(tk.Tk):
         self.file_label_var = tk.StringVar(value="No file loaded")
         ttk.Label(bar, textvariable=self.file_label_var).pack(side=tk.LEFT, padx=10)
 
-        # number-of-panels selector
         ttk.Label(bar, text="Number of comparisons:").pack(side=tk.LEFT, padx=(20, 5))
         self.num_panels_var = tk.IntVar(value=2)
         spin = ttk.Spinbox(
-            bar, from_=1, to=4, width=3,
+            bar,
+            from_=1,
+            to=4,
+            width=3,
             textvariable=self.num_panels_var,
-            command=self._on_num_panels_changed
+            command=self._on_num_panels_changed,
         )
         spin.pack(side=tk.LEFT)
 
-    # ───────────────────────── Workbook handling ───────────────────────── #
+    # ───────────────── workbook ───────────────── #
 
     def open_workbook(self):
         path = filedialog.askopenfilename(
@@ -74,11 +77,10 @@ class MainApp(tk.Tk):
         self.sheet_names = list(data.keys())
         self.file_label_var.set(f"Loaded: {os.path.basename(path)}")
 
-        # Update all panel comboboxes
         for panel in self.comparison_panels:
             panel.set_sheet_options(self.sheet_names)
 
-    # ───────────────────────── Panels / split-screen ───────────────────────── #
+    # ───────────────── panels / split-screen ───────────────── #
 
     def _on_num_panels_changed(self):
         n = self.num_panels_var.get()
@@ -87,10 +89,8 @@ class MainApp(tk.Tk):
         self._rebuild_panels(n)
 
     def _rebuild_panels(self, num_panels: int):
-        # ask split manager to generate frames
         frames = self.split_manager.create_layout(num_panels)
 
-        # destroy old panels
         for p in self.comparison_panels:
             p.destroy()
         self.comparison_panels.clear()
@@ -98,43 +98,60 @@ class MainApp(tk.Tk):
         for idx, frame in enumerate(frames, start=1):
             panel = ComparisonPanel(frame, title=f"Comparison {idx}", app=self)
             panel.pack(fill=tk.BOTH, expand=True)
-            # give it sheet options if workbook already loaded
             if self.sheet_names:
                 panel.set_sheet_options(self.sheet_names)
             self.comparison_panels.append(panel)
 
 
-# ───────────────────────── Single comparison panel ───────────────────────── #
+# ───────────────── Single comparison panel ───────────────── #
 
 class ComparisonPanel(ttk.LabelFrame):
     def __init__(self, parent, title: str, app: MainApp):
         super().__init__(parent, text=title)
         self.app = app
 
-        # top controls
+        # base font size for this panel
+        self.base_font_size = 9
+        self.row_font = tkfont.Font(family="Segoe UI", size=self.base_font_size)
+
+        # top controls (sheet selectors + Compare)
         ctrl = ttk.Frame(self)
-        ctrl.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
+        ctrl.pack(side=tk.TOP, fill=tk.X, padx=5, pady=(5, 0))
 
         ttk.Label(ctrl, text="Left sheet:").pack(side=tk.LEFT)
         self.left_sheet_var = tk.StringVar()
         self.left_combo = ttk.Combobox(
-            ctrl, textvariable=self.left_sheet_var,
-            state="readonly", width=22
+            ctrl, textvariable=self.left_sheet_var, state="readonly", width=22
         )
         self.left_combo.pack(side=tk.LEFT, padx=3)
 
         ttk.Label(ctrl, text="Right sheet:").pack(side=tk.LEFT)
         self.right_sheet_var = tk.StringVar()
         self.right_combo = ttk.Combobox(
-            ctrl, textvariable=self.right_sheet_var,
-            state="readonly", width=22
+            ctrl, textvariable=self.right_sheet_var, state="readonly", width=22
         )
         self.right_combo.pack(side=tk.LEFT, padx=3)
 
         btn = ttk.Button(ctrl, text="Compare", command=self.do_compare)
         btn.pack(side=tk.LEFT, padx=5)
 
-        # notebook with one tab per table type
+        # zoom slider
+        zoom_frame = ttk.Frame(self)
+        zoom_frame.pack(side=tk.TOP, fill=tk.X, padx=5, pady=(2, 5))
+
+        ttk.Label(zoom_frame, text="Zoom:").pack(side=tk.LEFT)
+        self.zoom_var = tk.DoubleVar(value=1.0)
+        zoom_slider = ttk.Scale(
+            zoom_frame,
+            from_=0.6,
+            to=1.6,
+            orient="horizontal",
+            variable=self.zoom_var,
+            command=self._on_zoom_changed,
+        )
+        zoom_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(4, 0))
+
+        # notebook for tables
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=5, pady=5)
 
@@ -143,6 +160,15 @@ class ComparisonPanel(ttk.LabelFrame):
             frame = ttk.Frame(self.notebook)
             self.notebook.add(frame, text=tname)
             self.table_views[tname] = self._create_table_widget(frame)
+
+    # ───── zoom handling ───── #
+
+    def _on_zoom_changed(self, *_):
+        factor = float(self.zoom_var.get())
+        size = max(6, int(self.base_font_size * factor))
+        self.row_font.configure(size=size)
+
+    # ───── combobox options ───── #
 
     def set_sheet_options(self, sheet_names: list[str]):
         vals = list(sheet_names)
@@ -156,7 +182,7 @@ class ComparisonPanel(ttk.LabelFrame):
             else:
                 self.right_sheet_var.set(vals[0])
 
-    # ----- treeview helpers ----- #
+    # ───── Treeview helpers ───── #
 
     def _create_table_widget(self, parent):
         cols = ("contingency", "issue", "percent_1", "percent_2", "delta_percent", "status")
@@ -181,6 +207,9 @@ class ComparisonPanel(ttk.LabelFrame):
 
         tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # apply font via tag
+        tree.tag_configure("zoom", font=self.row_font)
 
         return tree
 
@@ -207,9 +236,9 @@ class ComparisonPanel(ttk.LabelFrame):
                 fmt(row.get("delta_percent")),
                 str(row.get("status", "")),
             )
-            tree.insert("", tk.END, values=values)
+            tree.insert("", tk.END, values=values, tags=("zoom",))
 
-    # ----- button callback ----- #
+    # ───── compare button ───── #
 
     def do_compare(self):
         if self.app.workbook_data is None:
@@ -230,13 +259,12 @@ class ComparisonPanel(ttk.LabelFrame):
             messagebox.showerror("Error", f"Comparison failed:\n{e}")
             return
 
-        # If no tables matched at all, gently tell the user
         if not results:
             messagebox.showinfo(
                 "No tables",
                 "No matching ACCA Long Term/ACCA/DCwAC tables were found "
                 "on both selected sheets.\n\nCheck the console for 'found tables' "
-                "messages to see what was detected."
+                "messages to see what was detected.",
             )
 
         for tname, tree in self.table_views.items():
@@ -244,9 +272,8 @@ class ComparisonPanel(ttk.LabelFrame):
             self._populate_tree(tree, df)
 
 
-# ───────────────────────── public entry ───────────────────────── #
+# ───────────────── public entry ───────────────── #
 
 def run_app():
     app = MainApp()
     app.mainloop()
-
