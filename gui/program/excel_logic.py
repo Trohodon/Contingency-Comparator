@@ -1,21 +1,10 @@
-# gui/program/excel_logic.py
-
 from __future__ import annotations
 import math
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 import pandas as pd
 
 TABLE_NAMES = ("ACCA Long Term", "ACCA", "DCwAC")
-
-# canonical name map (strip spaces, lowercase)
-_CANON_NAME_MAP = {
-    "accalongterm": "ACCA Long Term",
-    "accalongterm.": "ACCA Long Term",
-    "accalongterm1": "ACCA Long Term",
-    "acca": "ACCA",
-    "dcwac": "DCwAC",
-}
 
 
 # ───────────────────────── LOADING ───────────────────────── #
@@ -42,6 +31,13 @@ def load_workbook(path: str) -> Dict[str, Dict[str, pd.DataFrame]]:
 
     print("=== Parsing workbook ===")
     for sheet_name, df in raw_sheets.items():
+        print(f"\n--- DEBUG SHEET: {sheet_name} ---")
+        # show first 40 rows so we can sanity-check
+        try:
+            print(df.head(40).to_string())
+        except Exception:
+            print(df.head(40))
+
         tables = extract_tables_from_sheet(df)
         parsed[sheet_name] = tables
         print(f"Sheet '{sheet_name}' → found tables: {list(tables.keys())}")
@@ -49,92 +45,116 @@ def load_workbook(path: str) -> Dict[str, Dict[str, pd.DataFrame]]:
     return parsed
 
 
-def _canon(text: str) -> str:
-    return "".join(text.split()).lower()
-
-
 def extract_tables_from_sheet(df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
     """
-    Find each block that belongs to "ACCA Long Term", "ACCA", "DCwAC".
+    Find ACCA Long Term / ACCA / DCwAC blocks using the 'Percent\\nLoading' row.
 
-    Pattern:
+    Pattern (based on your workbook):
 
-    Row X-1 : may contain a header label ("ACCA Long Term", etc) OR be blank.
-    Row X   : first cell is "Contingency Events"
-    Row X+1..Y-1 : data rows until a fully blank row
-
-    If the header cell cannot be matched, we assign based on order of
-    appearance (1st block = ACCA Long Term, 2nd = ACCA, 3rd = DCwAC).
+    - There is a header row where one of the cells contains "Percent" and
+      another contains "Case".
+    - The row immediately *below* that header is the first data row.
+    - Data rows continue until a fully blank row OR another header row.
+    - The *first* such block on the sheet is "ACCA Long Term",
+      the second is "ACCA", and the third is "DCwAC".
     """
+
     tables: Dict[str, pd.DataFrame] = {}
     nrows, ncols = df.shape
 
-    def row_is_blank(idx: int) -> bool:
-        return bool(df.iloc[idx, :].isna().all())
-
-    block_index = 0  # 0,1,2...
-
+    # 1) Find all header rows (those with a cell containing "percent")
+    header_rows: List[int] = []
     for i in range(nrows):
-        cell0 = df.iloc[i, 0]
+        row = df.iloc[i, :]
+        if any(isinstance(x, str) and "percent" in x.lower() for x in row):
+            header_rows.append(i)
 
-        if not isinstance(cell0, str):
+    # 2) For each header row, slice its data block and normalize columns
+    for block_index, header_idx in enumerate(header_rows):
+        if block_index >= len(TABLE_NAMES):
+            # ignore extra blocks
+            break
+
+        table_name = TABLE_NAMES[block_index]
+
+        # find key columns on the HEADER row
+        percent_col = None
+        case_col = None
+        for col in range(ncols):
+            val = df.iloc[header_idx, col]
+            if isinstance(val, str):
+                txt = val.lower()
+                if "percent" in txt and percent_col is None:
+                    percent_col = col
+                elif "case" in txt and case_col is None:
+                    case_col = col
+
+        if percent_col is None:
+            # without this we can't really parse the block
             continue
-        if cell0.strip().lower() != "contingency events":
+
+        # data starts on the next row
+        first_data_row = header_idx + 1
+        if first_data_row >= nrows:
             continue
 
-        # Try to get table name from header row above
-        table_name = None
-        if i > 0:
-            header_row = df.iloc[i - 1, :]
-            for c in range(ncols):
-                val = header_row[c]
-                if isinstance(val, str):
-                    name = _CANON_NAME_MAP.get(_canon(val), None)
-                    if name:
-                        table_name = name
-                        break
+        # data ends at the first fully blank row OR next header row
+        def row_is_blank(idx: int) -> bool:
+            return bool(df.iloc[idx, :].isna().all())
 
-        # If header wasn't readable, assign based on order
-        if table_name is None:
-            if block_index < len(TABLE_NAMES):
-                table_name = TABLE_NAMES[block_index]
-            else:
-                # extra blocks – just skip for now
-                block_index += 1
-                continue
+        last_data_row = first_data_row
+        while last_data_row < nrows and not row_is_blank(last_data_row):
+            # also stop if we hit another 'Percent' row
+            if last_data_row in header_rows and last_data_row != header_idx:
+                break
+            last_data_row += 1
 
-        # determine data bounds
-        start_data = i + 1
-        end_data = start_data
-        while end_data < nrows and not row_is_blank(end_data):
-            end_data += 1
+        # slice data block
+        data_block = df.iloc[first_data_row:last_data_row, :]
 
-        header = df.iloc[i, :].tolist()
-        block = df.iloc[start_data:end_data, :].copy()
-        block.columns = header
-        block = block.dropna(how="all")
+        if data_block.empty:
+            continue
 
-        if table_name in tables:
-            tables[table_name] = pd.concat(
-                [tables[table_name], block], ignore_index=True
-            )
-        else:
-            tables[table_name] = block
+        # Determine which columns are Contingency / Issue / Value by looking
+        # at the first non-blank row in the block (usually first_data_row)
+        sample_row = data_block.iloc[0, :]
 
-        block_index += 1
+        # columns to the LEFT of the Percent column that have non-NaN sample values
+        left_cols = [c for c in range(percent_col)
+                     if not pd.isna(sample_row.iloc[c])]
+
+        contingency_col = left_cols[0] if len(left_cols) >= 1 else None
+        issue_col = left_cols[1] if len(left_cols) >= 2 else None
+        value_col = left_cols[2] if len(left_cols) >= 3 else None
+
+        # If we can't identify at least contingency & issue, skip
+        if contingency_col is None or issue_col is None:
+            continue
+
+        # Build a canonical DataFrame with fixed column names
+        def safe_series(col_idx):
+            if col_idx is None or col_idx >= ncols:
+                return pd.Series([None] * len(data_block), index=data_block.index)
+            return data_block.iloc[:, col_idx]
+
+        block_norm = pd.DataFrame(
+            {
+                "Contingency": safe_series(contingency_col).astype(str),
+                "Resulting Issue": safe_series(issue_col).astype(str),
+                "Contingency Value": safe_series(value_col),
+                "Percent Loading": safe_series(percent_col),
+                "Case": safe_series(case_col),
+            }
+        )
+
+        # Drop fully blank rows (in case of noise)
+        block_norm = block_norm.dropna(how="all")
+        tables[table_name] = block_norm.reset_index(drop=True)
 
     return tables
 
 
 # ───────────────────────── COMPARISON ───────────────────────── #
-
-def _find_col_by_prefix(columns: Any, prefix: str) -> str | None:
-    prefix = prefix.lower()
-    for col in columns:
-        if isinstance(col, str) and col.strip().lower().startswith(prefix):
-            return col
-    return None
-
 
 def _to_float_series(series: pd.Series) -> pd.Series:
     def _conv(x):
@@ -156,38 +176,27 @@ def compare_tables(
 ) -> pd.DataFrame:
     """
     Compare two tables of the same type from two different sheets.
+
+    We now rely on our OWN canonical column names set in extract_tables_from_sheet():
+      "Contingency", "Resulting Issue", "Contingency Value",
+      "Percent Loading"
     """
-    c1 = _find_col_by_prefix(table1.columns, "contingency")
-    r1 = _find_col_by_prefix(table1.columns, "resulting")
-    v1 = _find_col_by_prefix(table1.columns, "contingency value")
-    p1 = _find_col_by_prefix(table1.columns, "percent")
-
-    c2 = _find_col_by_prefix(table2.columns, "contingency")
-    r2 = _find_col_by_prefix(table2.columns, "resulting")
-    v2 = _find_col_by_prefix(table2.columns, "contingency value")
-    p2 = _find_col_by_prefix(table2.columns, "percent")
-
-    required = [("contingency", c1, c2), ("resulting issue", r1, r2),
-                ("value", v1, v2), ("percent", p1, p2)]
-    for label, left, right in required:
-        if left is None or right is None:
-            raise ValueError(f"Could not find '{label}' columns on both tables.")
 
     left = pd.DataFrame(
         {
-            "contingency": table1[c1].astype(str),
-            "issue": table1[r1].astype(str),
-            "value_1": _to_float_series(table1[v1]),
-            "percent_1": _to_float_series(table1[p1]),
+            "contingency": table1["Contingency"].astype(str),
+            "issue": table1["Resulting Issue"].astype(str),
+            "value_1": _to_float_series(table1["Contingency Value"]),
+            "percent_1": _to_float_series(table1["Percent Loading"]),
         }
     )
 
     right = pd.DataFrame(
         {
-            "contingency": table2[c2].astype(str),
-            "issue": table2[r2].astype(str),
-            "value_2": _to_float_series(table2[v2]),
-            "percent_2": _to_float_series(table2[p2]),
+            "contingency": table2["Contingency"].astype(str),
+            "issue": table2["Resulting Issue"].astype(str),
+            "value_2": _to_float_series(table2["Contingency Value"]),
+            "percent_2": _to_float_series(table2["Percent Loading"]),
         }
     )
 
@@ -229,7 +238,7 @@ def compare_sheet_pair(
     sheet_right: str,
 ) -> Dict[str, pd.DataFrame]:
     """
-    Compare two sheets across all known table types.
+    Compare two sheets across ACCA Long Term / ACCA / DCwAC.
     Only returns tables that exist on BOTH sheets.
     """
     tables_left = workbook_data.get(sheet_left, {})
