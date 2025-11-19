@@ -1,15 +1,6 @@
 # main.py
-"""
-Entry point for the contingency comparison tool.
-"""
 
-from gui import ComparisonApp
-
-
-def main():
-    app = ComparisonApp()
-    app.mainloop()
-
+from gui.app import run_app
 
 if __name__ == "__main__":
-    main()
+    run_app()
