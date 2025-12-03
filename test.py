@@ -10,7 +10,7 @@ class PwbExportApp(tk.Tk):
     def __init__(self):
         super().__init__()
 
-        self.title("PowerWorld Contingency Violations Export (Trimmed)")
+        self.title("PowerWorld Contingency Results Export (Trimmed)")
         self.geometry("900x550")
 
         self.pwb_path = tk.StringVar(value="No .pwb file selected")
@@ -34,7 +34,7 @@ class PwbExportApp(tk.Tk):
 
         run_btn = ttk.Button(
             top,
-            text="Export existing contingency violations (trimmed)",
+            text="Export existing contingency results (trimmed)",
             command=self.run_export,
         )
         run_btn.grid(row=2, column=0, columnspan=3, pady=(10, 0), sticky="w")
@@ -80,18 +80,18 @@ class PwbExportApp(tk.Tk):
             return
 
         base, _ = os.path.splitext(pwb)
-        csv_out = base + "_ViolationCTG_trimmed.csv"
+        csv_out = base + "_CTGResults_trimmed.csv"
         self.csv_path = csv_out
 
         try:
-            self._export_violation_ctg_trimmed(pwb, csv_out)
+            self._export_ctgresults_trimmed(pwb, csv_out)
         except Exception as e:
             self.log(f"ERROR: {e}")
             messagebox.showerror("Error", str(e))
 
-    # ───────────── POWERWORLD EXPORT (ViolationCTG, trimmed) ───────────── #
+    # ───────────── POWERWORLD EXPORT (CTGResults, trimmed) ───────────── #
 
-    def _export_violation_ctg_trimmed(self, pwb_path: str, csv_out: str):
+    def _export_ctgresults_trimmed(self, pwb_path: str, csv_out: str):
         self.log("Connecting to PowerWorld via SimAuto...")
         simauto = win32com.client.Dispatch("pwrworld.SimulatorAuto")
         self.log("Connected.")
@@ -101,70 +101,87 @@ class PwbExportApp(tk.Tk):
         (err,) = simauto.OpenCase(pwb_path)
         if err:
             raise RuntimeError(f"OpenCase error: {err}")
-        self.log("Case opened successfully; using existing contingency results.")
+        self.log("Case opened successfully; using stored contingency results.")
 
-        # 2) Enter Contingency mode
-        self.log("Entering Contingency mode...")
-        (err,) = simauto.RunScriptCommand("EnterMode(Contingency);")
-        if err:
-            raise RuntimeError(f"EnterMode(Contingency) error: {err}")
-
-        # 3) Save all ViolationCTG fields to a temporary CSV
+        # 2) Export stored CTGResults to a temporary CSV
         tmp_csv = csv_out + ".tmp"
         clean_tmp = tmp_csv.replace("\\", "/")
 
-        self.log(f"Saving full ViolationCTG data to temporary CSV:\n  {tmp_csv}")
-        cmd = (
-            f'SaveData("{clean_tmp}", CSV, ViolationCTG, '
-            "[ALL], [], \"\");"
-        )
+        self.log(f"Saving CTGResults to temporary CSV:\n  {tmp_csv}")
+
+        # SaveData("file", CSV, CTGResults, [ALL], [], "")
+        cmd = 'SaveData("{}", CSV, CTGResults, [ALL], [], "")'.format(clean_tmp)
         (err,) = simauto.RunScriptCommand(cmd)
         if err:
-            raise RuntimeError(f"SaveData(ViolationCTG) error: {err}")
-        self.log("Full ViolationCTG CSV export complete.")
+            raise RuntimeError(f"SaveData(CTGResults) error: {err}")
 
-        # 4) Clean up SimAuto
+        self.log("Stored CTGResults CSV export complete.")
+
+        # 3) Close case / SimAuto
         try:
             simauto.CloseCase()
         except Exception:
             pass
         del simauto
 
-        # 5) Load the temp CSV and trim columns
+        # 4) Load temporary CSV
         if not os.path.exists(tmp_csv):
             raise RuntimeError("Temporary CSV not found after export.")
 
         self.log("Loading temporary CSV into pandas...")
         df = pd.read_csv(tmp_csv)
 
-        # Try to auto-detect reasonable columns
-        # Different PW versions use slightly different names, so we search.
-        col_ctg = next((c for c in df.columns if "CTG" in c or "Name" in c), None)
-        col_obj = next(
-            (c for c in df.columns if "ObjectName" in c or c.lower() in ("element", "branch")), None
+        self.log(f"Columns found: {list(df.columns)}")
+
+        # 5) Auto-detect key columns
+        # Contingency name
+        col_ctg = next(
+            (c for c in df.columns if "CTGName" in c or c == "Name"), None
         )
+        # Element / object name (branch/xfmr/etc.)
+        col_obj = next(
+            (
+                c
+                for c in df.columns
+                if "ObjectName" in c
+                or "Element" in c
+                or "BranchName" in c
+            ),
+            None,
+        )
+        # Category (Branch MVA, Bus Voltage, etc.)
         col_cat = next((c for c in df.columns if "Category" in c), None)
+        # Violation numeric value
         col_val = next((c for c in df.columns if c.lower() == "value"), None)
-        col_lim = next((c for c in df.columns if "Limit" == c or c.lower() == "limit"), None)
+        # Limit
+        col_lim = next((c for c in df.columns if c.lower() == "limit"), None)
+        # Percent of limit
         col_pct = next(
-            (c for c in df.columns if "Percent" in c or "PctOfLimit" in c or "PercentOfLimit" in c),
+            (
+                c
+                for c in df.columns
+                if "Percent" in c or "PctOfLimit" in c or "PercentOfLimit" in c
+            ),
             None,
         )
 
         keep_cols = [c for c in [col_ctg, col_obj, col_cat, col_val, col_lim, col_pct] if c]
 
         if not keep_cols:
-            raise RuntimeError("Could not find suitable columns to keep in ViolationCTG CSV.")
+            raise RuntimeError(
+                "Could not detect any relevant CTGResults columns to keep.\n"
+                "Check the 'Columns found' list in the log."
+            )
 
-        self.log(f"Keeping columns: {keep_cols}")
+        self.log(f"Keeping only columns: {keep_cols}")
 
         trimmed = df[keep_cols]
 
-        # 6) Overwrite final CSV with trimmed version
+        # 6) Write final trimmed CSV
         trimmed.to_csv(csv_out, index=False)
-        self.log(f"Trimmed CSV written to:\n  {csv_out}")
+        self.log(f"\nTrimmed CSV written to:\n  {csv_out}")
 
-        # Optionally remove temp file
+        # Remove temporary file
         try:
             os.remove(tmp_csv)
             self.log(f"Temporary file removed: {tmp_csv}")
@@ -176,7 +193,7 @@ class PwbExportApp(tk.Tk):
         self.log(f"Columns: {list(trimmed.columns)}")
         self.log(trimmed.head(10).to_string(index=False))
 
-        messagebox.showinfo("Done", f"Trimmed ViolationCTG exported to:\n{csv_out}")
+        messagebox.showinfo("Done", f"Stored CTGResults exported to:\n{csv_out}")
 
 
 if __name__ == "__main__":
