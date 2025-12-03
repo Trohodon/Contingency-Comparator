@@ -110,16 +110,19 @@ class PwbExportApp(tk.Tk):
             raise RuntimeError(f"EnterMode(Contingency) error: {err}")
 
         # 3) Use SaveData on ViolationCTG.
-        #    [ALL] -> all fields, including Value, Limit, Percent, LimitScale, etc.
-        self.log(f"Saving ViolationCTG data to CSV:\n  {csv_out}")
-        cmd = (
-            f'SaveData("{csv_out.replace("\\\\", "/")}", CSV, ViolationCTG, '
-            "[ALL], [], \"\");"
-        )
-        (err,) = simauto.RunScriptCommand(cmd)
-        if err:
-            raise RuntimeError(f"SaveData(ViolationCTG) error: {err}")
-        self.log("CSV export complete for ViolationCTG.")
+self.log(f"Saving ViolationCTG data to CSV:\n  {csv_out}")
+
+# Fix Windows slashes BEFORE the f-string:
+clean_csv = csv_out.replace("\\", "/")
+
+cmd = (
+    f'SaveData("{clean_csv}", CSV, ViolationCTG, '
+    '[ALL], [], "");'
+)
+(err,) = simauto.RunScriptCommand(cmd)
+if err:
+    raise RuntimeError(f"SaveData(ViolationCTG) error: {err}")
+self.log("CSV export complete for ViolationCTG.")
 
         # 4) Clean up SimAuto
         try:
