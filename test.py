@@ -18,8 +18,6 @@ class PwbExportApp(tk.Tk):
 
         self._build_gui()
 
-    # ───────────── GUI LAYOUT ───────────── #
-
     def _build_gui(self):
         top = ttk.Frame(self)
         top.pack(side=tk.TOP, fill=tk.X, padx=10, pady=10)
@@ -41,7 +39,6 @@ class PwbExportApp(tk.Tk):
 
         ttk.Separator(self, orient="horizontal").pack(fill=tk.X, padx=10, pady=5)
 
-        # Log / output area
         log_frame = ttk.Frame(self)
         log_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=10, pady=10)
 
@@ -50,9 +47,7 @@ class PwbExportApp(tk.Tk):
         self.log_text = tk.Text(log_frame, wrap="word", height=18)
         self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        scroll = ttk.Scrollbar(
-            log_frame, orient="vertical", command=self.log_text.yview
-        )
+        scroll = ttk.Scrollbar(log_frame, orient="vertical", command=self.log_text.yview)
         scroll.pack(side=tk.RIGHT, fill=tk.Y)
         self.log_text.configure(yscrollcommand=scroll.set)
 
@@ -61,7 +56,7 @@ class PwbExportApp(tk.Tk):
         self.log_text.see(tk.END)
         self.update_idletasks()
 
-    # ───────────── CALLBACKS ───────────── #
+    # -------- GUI Actions -------- #
 
     def browse_pwb(self):
         path = filedialog.askopenfilename(
@@ -80,134 +75,82 @@ class PwbExportApp(tk.Tk):
             return
 
         base, _ = os.path.splitext(pwb)
-        csv_out = base + "_CTGViolation_trimmed.csv"
+        csv_out = base + "_ViolationCTG_trimmed.csv"
         self.csv_path = csv_out
 
         try:
-            self._export_ctgviolation_trimmed(pwb, csv_out)
+            self._export_violationctg_trimmed(pwb, csv_out)
         except Exception as e:
             self.log(f"ERROR: {e}")
             messagebox.showerror("Error", str(e))
 
-    # ───────────── POWERWORLD EXPORT (CTGViolation, trimmed) ───────────── #
+    # -------- ACTUAL EXPORT -------- #
 
-    def _export_ctgviolation_trimmed(self, pwb_path: str, csv_out: str):
+    def _export_violationctg_trimmed(self, pwb_path: str, csv_out: str):
         self.log("Connecting to PowerWorld via SimAuto...")
         simauto = win32com.client.Dispatch("pwrworld.SimulatorAuto")
         self.log("Connected.")
 
-        # 1) Open the case
+        # 1) Open case
         self.log(f"Opening case: {pwb_path}")
         (err,) = simauto.OpenCase(pwb_path)
         if err:
             raise RuntimeError(f"OpenCase error: {err}")
-        self.log("Case opened successfully; using stored contingency violations.")
+        self.log("Case opened successfully.")
 
-        # Enter contingency mode (usually not strictly required, but safe)
-        self.log("Entering Contingency mode...")
-        (err,) = simauto.RunScriptCommand("EnterMode(Contingency);")
-        if err:
-            raise RuntimeError(f"EnterMode(Contingency) error: {err}")
-
-        # 2) Export CTGViolation to a temporary CSV
+        # 2) Export ViolationCTG table
         tmp_csv = csv_out + ".tmp"
         clean_tmp = tmp_csv.replace("\\", "/")
 
-        self.log(f"Saving CTGViolation to temporary CSV:\n  {tmp_csv}")
+        self.log(f"Saving ViolationCTG to temporary file:\n  {tmp_csv}")
 
-        # SaveData("file", CSV, CTGViolation, [ALL], [], "")
-        cmd = 'SaveData("{}", CSV, CTGViolation, [ALL], [], "")'.format(clean_tmp)
+        cmd = f'SaveData("{clean_tmp}", CSV, ViolationCTG, [ALL], [], "")'
         (err,) = simauto.RunScriptCommand(cmd)
         if err:
-            raise RuntimeError(f"SaveData(CTGViolation) error: {err}")
+            raise RuntimeError(f"SaveData(ViolationCTG) error: {err}")
 
-        self.log("Stored CTGViolation CSV export complete.")
+        self.log("ViolationCTG export complete.")
 
-        # 3) Close case / SimAuto
-        try:
-            simauto.CloseCase()
-        except Exception:
-            pass
+        simauto.CloseCase()
         del simauto
 
-        # 4) Load temporary CSV
-        if not os.path.exists(tmp_csv):
-            raise RuntimeError("Temporary CSV not found after export.")
-
-        self.log("Loading temporary CSV into pandas...")
+        # 3) Load temporary CSV
         df = pd.read_csv(tmp_csv)
+        self.log("CSV loaded into pandas.")
 
-        self.log(f"Columns found: {list(df.columns)}")
+        # 4) Identify desired columns
+        cols = df.columns.tolist()
+        self.log(f"Columns found: {cols}")
 
-        # 5) Auto-detect key columns
-
-        cols = list(df.columns)
-
-        # Contingency name column
-        col_ctg = next(
-            (c for c in cols if "CTG" in c or c == "Name"), None
-        )
-        # Object / element name (branch, xfmr, bus, etc.)
-        col_obj = next(
-            (
-                c
-                for c in cols
-                if "ObjectName" in c
-                or "Element" in c
-                or "BranchName" in c
-                or "ViolObject" in c
-            ),
-            None,
-        )
-        # Category (Branch MVA, Bus Voltage, etc.)
-        col_cat = next((c for c in cols if "Category" in c or "ViolCat" in c), None)
-        # Violation numeric value
+        col_ctg = next((c for c in cols if "CTG" in c or "ViolCTG" in c), None)
+        col_obj = next((c for c in cols if "Object" in c or "Element" in c), None)
+        col_cat = next((c for c in cols if "Category" in c), None)
         col_val = next((c for c in cols if c.lower() == "value"), None)
-        # Limit
         col_lim = next((c for c in cols if c.lower() == "limit"), None)
-        # Percent of limit
-        col_pct = next(
-            (
-                c
-                for c in cols
-                if "Percent" in c
-                or "PctOfLimit" in c
-                or "PercentOfLimit" in c
-            ),
-            None,
-        )
+        col_pct = next((c for c in cols if "Percent" in c), None)
 
-        keep_cols = [c for c in [col_ctg, col_obj, col_cat, col_val, col_lim, col_pct] if c]
+        keep = [c for c in [col_ctg, col_obj, col_cat, col_val, col_lim, col_pct] if c]
 
-        if not keep_cols:
-            raise RuntimeError(
-                "Could not detect any relevant CTGViolation columns to keep.\n"
-                "Check the 'Columns found' list in the log."
-            )
+        if not keep:
+            raise RuntimeError("No usable columns detected.")
 
-        self.log(f"Keeping only columns: {keep_cols}")
+        self.log(f"Keeping columns: {keep}")
 
-        trimmed = df[keep_cols]
-
-        # 6) Write final trimmed CSV
+        trimmed = df[keep]
         trimmed.to_csv(csv_out, index=False)
-        self.log(f"\nTrimmed CSV written to:\n  {csv_out}")
+        self.log(f"Trimmed CSV saved to:\n  {csv_out}")
 
-        # Remove temporary file
-        try:
-            os.remove(tmp_csv)
-            self.log(f"Temporary file removed: {tmp_csv}")
-        except OSError:
-            self.log(f"(Could not remove temporary file: {tmp_csv})")
+        os.remove(tmp_csv)
+        self.log("Temporary file removed.")
 
-        # 7) Preview
-        self.log("\nPreview of trimmed CSV:")
-        self.log(f"Columns: {list(trimmed.columns)}")
+        self.log("\nPreview:")
         self.log(trimmed.head(10).to_string(index=False))
 
-        messagebox.showinfo("Done", f"Stored CTGViolation exported to:\n{csv_out}")
+        messagebox.showinfo("Done", f"Stored ViolationCTG exported to:\n{csv_out}")
 
+
+# -------- Run GUI -------- #
 
 if __name__ == "__main__":
     app = PwbExportApp()
-    app.mainloop() 
+    app.mainloop()
