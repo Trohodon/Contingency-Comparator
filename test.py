@@ -10,7 +10,7 @@ class PwbExportApp(tk.Tk):
     def __init__(self):
         super().__init__()
 
-        self.title("PowerWorld Contingency Results Export (Trimmed)")
+        self.title("PowerWorld Contingency Violations Export (Trimmed)")
         self.geometry("900x550")
 
         self.pwb_path = tk.StringVar(value="No .pwb file selected")
@@ -80,18 +80,18 @@ class PwbExportApp(tk.Tk):
             return
 
         base, _ = os.path.splitext(pwb)
-        csv_out = base + "_CTGResults_trimmed.csv"
+        csv_out = base + "_CTGViolation_trimmed.csv"
         self.csv_path = csv_out
 
         try:
-            self._export_ctgresults_trimmed(pwb, csv_out)
+            self._export_ctgviolation_trimmed(pwb, csv_out)
         except Exception as e:
             self.log(f"ERROR: {e}")
             messagebox.showerror("Error", str(e))
 
-    # ───────────── POWERWORLD EXPORT (CTGResults, trimmed) ───────────── #
+    # ───────────── POWERWORLD EXPORT (CTGViolation, trimmed) ───────────── #
 
-    def _export_ctgresults_trimmed(self, pwb_path: str, csv_out: str):
+    def _export_ctgviolation_trimmed(self, pwb_path: str, csv_out: str):
         self.log("Connecting to PowerWorld via SimAuto...")
         simauto = win32com.client.Dispatch("pwrworld.SimulatorAuto")
         self.log("Connected.")
@@ -101,21 +101,27 @@ class PwbExportApp(tk.Tk):
         (err,) = simauto.OpenCase(pwb_path)
         if err:
             raise RuntimeError(f"OpenCase error: {err}")
-        self.log("Case opened successfully; using stored contingency results.")
+        self.log("Case opened successfully; using stored contingency violations.")
 
-        # 2) Export stored CTGResults to a temporary CSV
+        # Enter contingency mode (usually not strictly required, but safe)
+        self.log("Entering Contingency mode...")
+        (err,) = simauto.RunScriptCommand("EnterMode(Contingency);")
+        if err:
+            raise RuntimeError(f"EnterMode(Contingency) error: {err}")
+
+        # 2) Export CTGViolation to a temporary CSV
         tmp_csv = csv_out + ".tmp"
         clean_tmp = tmp_csv.replace("\\", "/")
 
-        self.log(f"Saving CTGResults to temporary CSV:\n  {tmp_csv}")
+        self.log(f"Saving CTGViolation to temporary CSV:\n  {tmp_csv}")
 
-        # SaveData("file", CSV, CTGResults, [ALL], [], "")
-        cmd = 'SaveData("{}", CSV, CTGResults, [ALL], [], "")'.format(clean_tmp)
+        # SaveData("file", CSV, CTGViolation, [ALL], [], "")
+        cmd = 'SaveData("{}", CSV, CTGViolation, [ALL], [], "")'.format(clean_tmp)
         (err,) = simauto.RunScriptCommand(cmd)
         if err:
-            raise RuntimeError(f"SaveData(CTGResults) error: {err}")
+            raise RuntimeError(f"SaveData(CTGViolation) error: {err}")
 
-        self.log("Stored CTGResults CSV export complete.")
+        self.log("Stored CTGViolation CSV export complete.")
 
         # 3) Close case / SimAuto
         try:
@@ -134,33 +140,39 @@ class PwbExportApp(tk.Tk):
         self.log(f"Columns found: {list(df.columns)}")
 
         # 5) Auto-detect key columns
-        # Contingency name
+
+        cols = list(df.columns)
+
+        # Contingency name column
         col_ctg = next(
-            (c for c in df.columns if "CTGName" in c or c == "Name"), None
+            (c for c in cols if "CTG" in c or c == "Name"), None
         )
-        # Element / object name (branch/xfmr/etc.)
+        # Object / element name (branch, xfmr, bus, etc.)
         col_obj = next(
             (
                 c
-                for c in df.columns
+                for c in cols
                 if "ObjectName" in c
                 or "Element" in c
                 or "BranchName" in c
+                or "ViolObject" in c
             ),
             None,
         )
         # Category (Branch MVA, Bus Voltage, etc.)
-        col_cat = next((c for c in df.columns if "Category" in c), None)
+        col_cat = next((c for c in cols if "Category" in c or "ViolCat" in c), None)
         # Violation numeric value
-        col_val = next((c for c in df.columns if c.lower() == "value"), None)
+        col_val = next((c for c in cols if c.lower() == "value"), None)
         # Limit
-        col_lim = next((c for c in df.columns if c.lower() == "limit"), None)
+        col_lim = next((c for c in cols if c.lower() == "limit"), None)
         # Percent of limit
         col_pct = next(
             (
                 c
-                for c in df.columns
-                if "Percent" in c or "PctOfLimit" in c or "PercentOfLimit" in c
+                for c in cols
+                if "Percent" in c
+                or "PctOfLimit" in c
+                or "PercentOfLimit" in c
             ),
             None,
         )
@@ -169,7 +181,7 @@ class PwbExportApp(tk.Tk):
 
         if not keep_cols:
             raise RuntimeError(
-                "Could not detect any relevant CTGResults columns to keep.\n"
+                "Could not detect any relevant CTGViolation columns to keep.\n"
                 "Check the 'Columns found' list in the log."
             )
 
@@ -193,7 +205,7 @@ class PwbExportApp(tk.Tk):
         self.log(f"Columns: {list(trimmed.columns)}")
         self.log(trimmed.head(10).to_string(index=False))
 
-        messagebox.showinfo("Done", f"Stored CTGResults exported to:\n{csv_out}")
+        messagebox.showinfo("Done", f"Stored CTGViolation exported to:\n{csv_out}")
 
 
 if __name__ == "__main__":
