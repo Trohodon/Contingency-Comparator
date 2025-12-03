@@ -10,7 +10,7 @@ class PwbExportApp(tk.Tk):
     def __init__(self):
         super().__init__()
 
-        self.title("PowerWorld Contingency Violations Export")
+        self.title("PowerWorld Contingency Violations Export (ViolationCTG)")
         self.geometry("900x550")
 
         self.pwb_path = tk.StringVar(value="No .pwb file selected")
@@ -18,7 +18,7 @@ class PwbExportApp(tk.Tk):
 
         self._build_gui()
 
-    # ───────────────── GUI LAYOUT ───────────────── #
+    # ───────────── GUI LAYOUT ───────────── #
 
     def _build_gui(self):
         top = ttk.Frame(self)
@@ -29,12 +29,13 @@ class PwbExportApp(tk.Tk):
             row=1, column=0, columnspan=2, sticky="w"
         )
 
-        browse_btn = ttk.Button(top, text="Browse...", command=self.browse_pwb)
+        browse_btn = ttk.Button(top, text="Browse…", command=self.browse_pwb)
         browse_btn.grid(row=1, column=2, padx=(5, 0), sticky="e")
 
         run_btn = ttk.Button(
-            top, text="Export existing branch violations (with Value % Limit)",
-            command=self.run_export
+            top,
+            text="Export existing contingency violations (ViolationCTG)",
+            command=self.run_export,
         )
         run_btn.grid(row=2, column=0, columnspan=3, pady=(10, 0), sticky="w")
 
@@ -49,7 +50,9 @@ class PwbExportApp(tk.Tk):
         self.log_text = tk.Text(log_frame, wrap="word", height=18)
         self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        scroll = ttk.Scrollbar(log_frame, orient="vertical", command=self.log_text.yview)
+        scroll = ttk.Scrollbar(
+            log_frame, orient="vertical", command=self.log_text.yview
+        )
         scroll.pack(side=tk.RIGHT, fill=tk.Y)
         self.log_text.configure(yscrollcommand=scroll.set)
 
@@ -58,7 +61,7 @@ class PwbExportApp(tk.Tk):
         self.log_text.see(tk.END)
         self.update_idletasks()
 
-    # ───────────────── CALLBACKS ───────────────── #
+    # ───────────── CALLBACKS ───────────── #
 
     def browse_pwb(self):
         path = filedialog.askopenfilename(
@@ -76,58 +79,56 @@ class PwbExportApp(tk.Tk):
             messagebox.showwarning("No case selected", "Please select a valid .pwb file.")
             return
 
-        # CSV next to the case
         base, _ = os.path.splitext(pwb)
-        csv_out = base + "_BranchViolations.csv"
+        csv_out = base + "_ViolationCTG.csv"
         self.csv_path = csv_out
 
         try:
-            self._export_existing_branch_violations(pwb, csv_out)
+            self._export_violation_ctg(pwb, csv_out)
         except Exception as e:
             self.log(f"ERROR: {e}")
             messagebox.showerror("Error", str(e))
 
-    # ───────────── POWERWORLD EXPORT (existing results) ───────────── #
+    # ───────────── POWERWORLD EXPORT (ViolationCTG) ───────────── #
 
-    def _export_existing_branch_violations(self, pwb_path: str, csv_out: str):
+    def _export_violation_ctg(self, pwb_path: str, csv_out: str):
         self.log("Connecting to PowerWorld via SimAuto...")
         simauto = win32com.client.Dispatch("pwrworld.SimulatorAuto")
         self.log("Connected.")
 
-        # 1) Open case (contingencies already solved)
+        # 1) Open the case (must already have contingency results)
         self.log(f"Opening case: {pwb_path}")
-        err, = simauto.OpenCase(pwb_path)
+        (err,) = simauto.OpenCase(pwb_path)
         if err:
             raise RuntimeError(f"OpenCase error: {err}")
         self.log("Case opened successfully; using existing contingency results.")
 
-        # 2) Go to Contingency mode (do NOT re-run)
+        # 2) Enter Contingency mode (so ViolationCTG objects reflect CTG results)
         self.log("Entering Contingency mode...")
-        err, = simauto.RunScriptCommand("EnterMode(Contingency);")
+        (err,) = simauto.RunScriptCommand("EnterMode(Contingency);")
         if err:
             raise RuntimeError(f"EnterMode(Contingency) error: {err}")
 
-        # 3) Export violation matrices.
-        #    This writes one row per overloaded line/xfmr with:
-        #    CTG name, element IDs/names, CATEGORY, VALUE, LIMIT, PERCENT, etc.
-        self.log(f"Saving branch violation matrices to CSV:\n  {csv_out}")
+        # 3) Use SaveData on ViolationCTG.
+        #    [ALL] -> all fields, including Value, Limit, Percent, LimitScale, etc.
+        self.log(f"Saving ViolationCTG data to CSV:\n  {csv_out}")
         cmd = (
-            f'CTGSaveViolationMatrices("{csv_out}", CSVCOLHEADER, '
-            'YES, [BRANCH], YES, NO);'
+            f'SaveData("{csv_out.replace("\\\\", "/")}", CSV, ViolationCTG, '
+            "[ALL], [], \"\");"
         )
-        err, = simauto.RunScriptCommand(cmd)
+        (err,) = simauto.RunScriptCommand(cmd)
         if err:
-            raise RuntimeError(f"CTGSaveViolationMatrices error: {err}")
-        self.log("CSV export complete (branch violations).")
+            raise RuntimeError(f"SaveData(ViolationCTG) error: {err}")
+        self.log("CSV export complete for ViolationCTG.")
 
-        # Close case / simauto
+        # 4) Clean up SimAuto
         try:
             simauto.CloseCase()
         except Exception:
             pass
         del simauto
 
-        # 4) Preview CSV so you can see columns (including Value)
+        # 5) Quick preview of the CSV so you can see the Value column
         if os.path.exists(csv_out):
             self.log("\nPreview of first few rows:")
             try:
@@ -140,7 +141,7 @@ class PwbExportApp(tk.Tk):
         else:
             self.log("WARNING: CSV file does not exist after export.")
 
-        messagebox.showinfo("Done", f"Violations exported to:\n{csv_out}")
+        messagebox.showinfo("Done", f"ViolationCTG exported to:\n{csv_out}")
 
 
 if __name__ == "__main__":
