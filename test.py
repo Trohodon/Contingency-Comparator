@@ -1,140 +1,138 @@
 import os
+import sys
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
-
+from tkinter import filedialog, messagebox
 import win32com.client
-import pandas as pd
 
 
-class PwbExportApp(tk.Tk):
-    def __init__(self):
-        super().__init__()
+def export_ctg_results(pwb_path: str, csv_path: str):
+    """
+    Use SimAuto to open a PWB that already has contingency results
+    and export the Combined Tables 'CTG_Results' info to CSV.
 
-        self.title("PowerWorld Contingency Results Export")
-        self.geometry("800x500")
-
-        self.pwb_path = tk.StringVar(value="No .pwb file selected")
-        self.csv_path = None
-
-        self._build_gui()
-
-    # ───────────── GUI LAYOUT ───────────── #
-
-    def _build_gui(self):
-        top = ttk.Frame(self)
-        top.pack(side=tk.TOP, fill=tk.X, padx=10, pady=10)
-
-        ttk.Label(top, text="Selected .pwb case:").grid(row=0, column=0, sticky="w")
-        ttk.Label(top, textvariable=self.pwb_path, width=80).grid(
-            row=1, column=0, columnspan=2, sticky="w"
-        )
-
-        browse_btn = ttk.Button(top, text="Browse...", command=self.browse_pwb)
-        browse_btn.grid(row=1, column=2, padx=(5, 0), sticky="e")
-
-        run_btn = ttk.Button(
-            top, text="Export existing contingency results", command=self.run_export
-        )
-        run_btn.grid(row=2, column=0, columnspan=3, pady=(10, 0), sticky="w")
-
-        ttk.Separator(self, orient="horizontal").pack(fill=tk.X, padx=10, pady=5)
-
-        log_frame = ttk.Frame(self)
-        log_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=10, pady=10)
-
-        ttk.Label(log_frame, text="Log:").pack(anchor="w")
-
-        self.log_text = tk.Text(log_frame, wrap="word", height=15)
-        self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        scroll = ttk.Scrollbar(log_frame, orient="vertical",
-                               command=self.log_text.yview)
-        scroll.pack(side=tk.RIGHT, fill=tk.Y)
-        self.log_text.configure(yscrollcommand=scroll.set)
-
-    def log(self, msg: str):
-        self.log_text.insert(tk.END, msg + "\n")
-        self.log_text.see(tk.END)
-        self.update_idletasks()
-
-    # ───────────── CALLBACKS ───────────── #
-
-    def browse_pwb(self):
-        path = filedialog.askopenfilename(
-            title="Select PowerWorld case (.pwb)",
-            filetypes=[("PowerWorld case", "*.pwb"), ("All files", "*.*")],
-        )
-        if path:
-            self.pwb_path.set(path)
-            self.csv_path = None
-            self.log(f"Selected case: {path}")
-
-    def run_export(self):
-        pwb = self.pwb_path.get()
-        if not pwb.lower().endswith(".pwb") or not os.path.exists(pwb):
-            messagebox.showwarning("No case selected",
-                                   "Please select a valid .pwb file.")
-            return
-
-        base, _ = os.path.splitext(pwb)
-        csv_out = base + "_Violations.csv"
-        self.csv_path = csv_out
-
-        try:
-            self._export_existing_results(pwb, csv_out)
-        except Exception as e:
-            self.log(f"ERROR: {e}")
-            messagebox.showerror("Error", str(e))
-
-    # ────────── POWERWORLD EXPORT (existing results only) ────────── #
-
-    def _export_existing_results(self, pwb_path: str, csv_out: str):
-        self.log("Connecting to PowerWorld via SimAuto...")
+    The CSV will have one row per contingency result with columns like:
+    Name (contingency), Category, Value, Limit, Percent, LimitScale.
+    """
+    simauto = None
+    try:
         simauto = win32com.client.Dispatch("pwrworld.SimulatorAuto")
-        self.log("Connected.")
 
-        # 1) Open case – we assume contingencies are already solved in this file
-        self.log(f"Opening case: {pwb_path}")
+        # Make Simulator invisible so it doesn't pop up all over the place
+        try:
+            simauto.UIVisible = False
+        except Exception:
+            # Older versions may not have UIVisible; ignore if so
+            pass
+
+        # Open the case
         err, = simauto.OpenCase(pwb_path)
         if err:
             raise RuntimeError(f"OpenCase error: {err}")
-        self.log("Case opened successfully (existing results will be used).")
 
-        # 2) Go to Contingency mode (does NOT re-run analysis)
-        self.log("Entering Contingency mode...")
-        err, = simauto.RunScriptCommand("EnterMode(Contingency);")
+        # Make sure we’re in RUN mode (usually already true if results exist)
+        err, = simauto.RunScriptCommand('EnterMode(RUN);')
         if err:
-            raise RuntimeError(f"EnterMode(Contingency) error: {err}")
+            raise RuntimeError(f"EnterMode error: {err}")
 
-        # 3) Export the stored violation matrices to CSV
-        #    This uses whatever is already stored in Result Storage.
-        self.log(f"Saving stored violation matrices to CSV:\n  {csv_out}")
+        # Build a SaveData command for the CTG_Results table.
+        #
+        # SaveData("filename", filetype, objecttype,
+        #          [fieldlist], [subdatalist], filter,
+        #          [SortFieldList], Transpose, Append);
+        #
+        # Field list below:
+        #   Name        -> Contingency name/label
+        #   Category    -> Branch MVA, Bus Voltage, etc.
+        #   Value       -> The MVA value you see in the grid
+        #   Limit       -> Limit used for that violation
+        #   Percent     -> Value / Limit * 100
+        #   LimitScale  -> Scale of limit (emergency etc.)
+        #
+        # If any of these names are slightly different in your version,
+        # PowerWorld will report the invalid field name in the error text.
         cmd = (
-            f'CTGSaveViolationMatrices("{csv_out}", CSVCOLHEADER, '
-            'YES, [BRANCH], YES, NO);'
-        )
+            'SaveData("{fname}", CSV, CTG_Results, '
+            '[Name, Category, Value, Limit, Percent, LimitScale], '
+            '[], "", [], NO, NO);'
+        ).format(fname=csv_path.replace('\\', '/'))
+
         err, = simauto.RunScriptCommand(cmd)
         if err:
-            raise RuntimeError(f"CTGSaveViolationMatrices error: {err}")
-        self.log("CSV export complete (using existing CA results).")
+            raise RuntimeError(f"SaveData error: {err}")
 
-        # Close SimAuto
-        del simauto
-
-        if os.path.exists(csv_out):
-            self.log("\nPreview of first few rows:")
+    finally:
+        if simauto is not None:
             try:
-                df = pd.read_csv(csv_out)
-                preview = df.head(10).to_string(index=False)
-                self.log(preview)
-            except Exception as e:
-                self.log(f"(Could not read CSV preview: {e})")
-        else:
-            self.log("WARNING: CSV file does not exist after export.")
+                simauto.CloseCase()
+            except Exception:
+                pass
+            del simauto
 
-        messagebox.showinfo("Done", f"Violations exported to:\n{csv_out}")
+
+class ExportGUI(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("PowerWorld Contingency Exporter")
+
+        self.pwb_path = tk.StringVar()
+        self.csv_path = tk.StringVar()
+
+        # Row 0: PWB selection
+        tk.Label(self, text="PowerWorld case (.pwb):").grid(row=0, column=0, sticky="w", padx=5, pady=5)
+        tk.Entry(self, textvariable=self.pwb_path, width=70).grid(row=0, column=1, padx=5, pady=5)
+        tk.Button(self, text="Browse…", command=self.browse_pwb).grid(row=0, column=2, padx=5, pady=5)
+
+        # Row 1: CSV output
+        tk.Label(self, text="Output CSV:").grid(row=1, column=0, sticky="w", padx=5, pady=5)
+        tk.Entry(self, textvariable=self.csv_path, width=70).grid(row=1, column=1, padx=5, pady=5)
+        tk.Button(self, text="Browse…", command=self.browse_csv).grid(row=1, column=2, padx=5, pady=5)
+
+        # Row 2: Run button
+        tk.Button(self, text="Export CTG Results", command=self.run_export, width=25).grid(
+            row=2, column=0, columnspan=3, pady=10
+        )
+
+    def browse_pwb(self):
+        filename = filedialog.askopenfilename(
+            title="Select PowerWorld Case",
+            filetypes=[("PowerWorld case", "*.pwb"), ("All files", "*.*")]
+        )
+        if filename:
+            self.pwb_path.set(filename)
+            # Suggest a CSV name in the same folder
+            base = os.path.splitext(os.path.basename(filename))[0]
+            suggested = os.path.join(os.path.dirname(filename), f"{base}_CTGResults.csv")
+            if not self.csv_path.get():
+                self.csv_path.set(suggested)
+
+    def browse_csv(self):
+        filename = filedialog.asksaveasfilename(
+            title="Select Output CSV",
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+        )
+        if filename:
+            self.csv_path.set(filename)
+
+    def run_export(self):
+        pwb = self.pwb_path.get().strip()
+        csv = self.csv_path.get().strip()
+
+        if not pwb or not os.path.isfile(pwb):
+            messagebox.showerror("Error", "Please select a valid .pwb file.")
+            return
+        if not csv:
+            messagebox.showerror("Error", "Please choose an output CSV file.")
+            return
+
+        try:
+            export_ctg_results(pwb, csv)
+            messagebox.showinfo("Done", f"Export complete.\n\nSaved:\n{csv}")
+        except Exception as e:
+            messagebox.showerror("Export failed", str(e))
 
 
 if __name__ == "__main__":
-    app = PwbExportApp()
+    # Simple Tkinter startup
+    app = ExportGUI()
     app.mainloop()
