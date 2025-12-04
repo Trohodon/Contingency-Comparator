@@ -100,20 +100,20 @@ class PwbExportApp(tk.Tk):
         simauto = win32com.client.Dispatch("pwrworld.SimulatorAuto")
         self.log("Connected.")
 
-        # 1) Open case – we assume contingencies are already solved in this file
+        # 1) Open case – contingencies already solved
         self.log(f"Opening case: {pwb_path}")
         (err,) = simauto.OpenCase(pwb_path)
         if err:
             raise RuntimeError(f"OpenCase error: {err}")
         self.log("Case opened successfully (existing results will be used).")
 
-        # 2) Go to Contingency mode (does NOT re-run analysis)
+        # 2) Enter Contingency mode
         self.log("Entering Contingency mode...")
         (err,) = simauto.RunScriptCommand("EnterMode(Contingency);")
         if err:
             raise RuntimeError(f"EnterMode(Contingency) error: {err}")
 
-        # 3) Export the stored violation matrices to CSV (branches = lines + transformers)
+        # 3) Export violation matrices for branches (lines + xfmrs)
         self.log(f"Saving stored violation matrices to CSV:\n  {csv_out}")
         clean_csv = csv_out.replace("\\", "/")
         cmd = (
@@ -132,7 +132,7 @@ class PwbExportApp(tk.Tk):
             pass
         del simauto
 
-        # 4) Load the raw CSV and build a filtered summary
+        # 4) Load raw CSV and build summary
         if os.path.exists(csv_out):
             self.log("\nPreview of first few rows (raw CTG matrix):")
             try:
@@ -151,7 +151,7 @@ class PwbExportApp(tk.Tk):
                     self.log(summary.head(20).to_string(index=False))
                 else:
                     self.log(
-                        "\nNo matching Branch MVA rows found "
+                        "\nNo matching Branch MVA rows found, "
                         "or required columns were missing."
                     )
 
@@ -171,14 +171,14 @@ class PwbExportApp(tk.Tk):
 
     def _build_branch_summary(self, df: pd.DataFrame):
         """
-        Build a compact summary for line/transformer contingencies, using
-        the specific columns you care about:
+        Build a compact summary for line/transformer contingencies using
+        the specific columns you requested:
 
-        - CTGLabel (contingency)
-        - LimViolID (line/xfmr, with From -> To string)
-        - LimViolLimit (MVA limit)
-        - LimViolValue / LimViolMVA / LimViolVal* (actual value, if present)
-        - CTGVioIMaxLine (percent loading)
+        - Contingency        (from CTGLabel)
+        - LineID             (from LimViolID)
+        - Limit_MVA          (from LimViolLimit)
+        - Flow_MVA           (computed = Limit_MVA * Percent / 100)
+        - PercentOfLimit     (from CTGVioIMaxLine)
         """
 
         if df is None or df.empty:
@@ -186,7 +186,7 @@ class PwbExportApp(tk.Tk):
 
         df2 = df.copy()
 
-        # 1) Keep only Branch MVA rows if LimViolCat exists
+        # Only keep Branch MVA rows if LimViolCat exists
         if "LimViolCat" in df2.columns:
             mask = df2["LimViolCat"].astype(str).str.contains(
                 "Branch MVA", case=False, na=False
@@ -196,49 +196,42 @@ class PwbExportApp(tk.Tk):
         if df2.empty:
             return None
 
-        # 2) Required columns
-        if "CTGLabel" not in df2.columns or "LimViolID" not in df2.columns:
-            # If we do not have these, there is no point building a summary
+        required = ["CTGLabel", "LimViolID", "LimViolLimit", "CTGVioIMaxLine"]
+        missing = [c for c in required if c not in df2.columns]
+        if missing:
+            # If something is missing, bail out so you know about it
+            self.log(f"Required columns missing from CSV: {missing}")
             return None
 
-        cols = ["CTGLabel", "LimViolID"]
+        # Drop rows where LimViolID is blank (no actual violated element)
+        df2 = df2[df2["LimViolID"].astype(str).str.strip() != ""]
+        if df2.empty:
+            return None
 
-        # Limit column
-        if "LimViolLimit" in df2.columns:
-            cols.append("LimViolLimit")
+        # Convert numeric columns
+        df2["LimViolLimit"] = pd.to_numeric(df2["LimViolLimit"], errors="coerce")
+        df2["CTGVioIMaxLine"] = pd.to_numeric(
+            df2["CTGVioIMaxLine"], errors="coerce"
+        )
 
-        # Actual value column: look for something like LimViolValue / LimViolMVA / LimViolVal…
-        value_col = None
-        for c in df2.columns:
-            cl = c.lower()
-            if "limviol" in cl and ("value" in cl or "val" in cl or "mva" in cl):
-                value_col = c
-                break
-        if value_col is not None and value_col not in cols:
-            cols.append(value_col)
+        # Compute actual flow MVA from limit * percent / 100
+        df2["Flow_MVA"] = df2["LimViolLimit"] * df2["CTGVioIMaxLine"] / 100.0
 
-        # Percent column: CTGVioIMaxLine (or similar)
-        percent_col = None
-        for c in df2.columns:
-            cl = c.lower()
-            if "ctgvio" in cl and "maxline" in cl:
-                percent_col = c
-                break
-        if percent_col is not None and percent_col not in cols:
-            cols.append(percent_col)
+        # Build the final summary table with nice column names
+        summary = pd.DataFrame(
+            {
+                "Contingency": df2["CTGLabel"],
+                "LineID": df2["LimViolID"],
+                "Limit_MVA": df2["LimViolLimit"],
+                "Flow_MVA": df2["Flow_MVA"],
+                "PercentOfLimit": df2["CTGVioIMaxLine"],
+            }
+        )
 
-        # If we somehow still only have CTGLabel/LimViolID, return at least that
-        summary = df2[cols].copy()
-
-        # Optional: sort by percent descending if present
-        if percent_col is not None:
-            try:
-                summary[percent_col] = pd.to_numeric(
-                    summary[percent_col], errors="coerce"
-                )
-                summary = summary.sort_values(by=percent_col, ascending=False)
-            except Exception:
-                pass
+        # Sort by highest loading first
+        summary = summary.sort_values(
+            by=["PercentOfLimit", "Contingency"], ascending=[False, True]
+        )
 
         return summary
 
