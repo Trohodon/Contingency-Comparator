@@ -151,8 +151,8 @@ class PwbExportApp(tk.Tk):
                     self.log(summary.head(20).to_string(index=False))
                 else:
                     self.log(
-                        "\nNo matching branch/transformer violations found "
-                        "for summary (or could not auto-detect columns)."
+                        "\nNo matching Branch MVA rows found "
+                        "or required columns were missing."
                     )
 
             except Exception as e:
@@ -171,12 +171,14 @@ class PwbExportApp(tk.Tk):
 
     def _build_branch_summary(self, df: pd.DataFrame):
         """
-        Build a compact summary for line/transformer contingencies:
-        - Contingency name
-        - Affected line (label + optional From/To)
-        - Limit
-        - Violation value
-        - Percent loading
+        Build a compact summary for line/transformer contingencies, using
+        the specific columns you care about:
+
+        - CTGLabel (contingency)
+        - LimViolID (line/xfmr, with From -> To string)
+        - LimViolLimit (MVA limit)
+        - LimViolValue / LimViolMVA / LimViolVal* (actual value, if present)
+        - CTGVioIMaxLine (percent loading)
         """
 
         if df is None or df.empty:
@@ -184,118 +186,61 @@ class PwbExportApp(tk.Tk):
 
         df2 = df.copy()
 
-        # Helper to find first column whose name contains any of given substrings
-        def find_col(substrings, exclude=None):
-            if exclude is None:
-                exclude_local = []
-            else:
-                exclude_local = [e.lower() for e in exclude]
+        # 1) Keep only Branch MVA rows if LimViolCat exists
+        if "LimViolCat" in df2.columns:
+            mask = df2["LimViolCat"].astype(str).str.contains(
+                "Branch MVA", case=False, na=False
+            )
+            df2 = df2[mask]
 
-            for c in df2.columns:
-                cl = c.lower()
-                if any(s in cl for s in substrings) and not any(
-                    e in cl for e in exclude_local
-                ):
-                    return c
+        if df2.empty:
             return None
 
-        # Contingency column
-        ctg_col = find_col(["ctg", "contingency", "cont"])
-        # Element / line label column
-        elem_col = None
-        for c in df2.columns:
-            cl = c.lower()
-            if (
-                any(s in cl for s in ["mon", "element", "object", "branch", "line"])
-                and any(s in cl for s in ["label", "name", "id"])
-            ):
-                elem_col = c
-                break
-        if elem_col is None and len(df2.columns) > 0:
-            # Fallback to first column if we cannot detect anything better
-            elem_col = df2.columns[0]
-
-        # From / To bus columns (if available)
-        from_bus_col = None
-        to_bus_col = None
-        for c in df2.columns:
-            cl = c.lower()
-            if "from" in cl and "bus" in cl:
-                from_bus_col = c
-            if "to" in cl and "bus" in cl:
-                to_bus_col = c
-
-        # Limit, value, percent columns
-        percent_col = find_col(["percent", "%"])
-        limit_col = find_col(["limit"], exclude=["percent"])
-        value_col = find_col(
-            ["value", "flow", "mw", "mva", "amp"],
-            exclude=["limit", "percent"],
-        )
-
-        # Optional type column to restrict to branches (in case other types exist)
-        type_col = None
-        for c in df2.columns:
-            cl = c.lower()
-            if "objecttype" in cl or cl == "type" or "type " in cl:
-                type_col = c
-                break
-
-        # Start with all rows
-        mask = pd.Series(True, index=df2.index)
-
-        # Restrict to branches (lines/transformers) if type column exists
-        if type_col is not None:
-            tvals = df2[type_col].astype(str).str.lower()
-            mask &= tvals.str.contains("branch") | tvals.str.contains("xfmr")
-
-        # Restrict to actual violations: Percent >= 100 or Value > Limit
-        if percent_col is not None:
-            try:
-                perc = pd.to_numeric(df2[percent_col], errors="coerce")
-                mask &= perc >= 100.0
-            except Exception:
-                pass
-        elif value_col is not None and limit_col is not None:
-            try:
-                val = pd.to_numeric(df2[value_col], errors="coerce")
-                lim = pd.to_numeric(df2[limit_col], errors="coerce")
-                mask &= (val.notna() & lim.notna() & (val > lim))
-            except Exception:
-                pass
-
-        filtered = df2[mask].copy()
-        if filtered.empty:
+        # 2) Required columns
+        if "CTGLabel" not in df2.columns or "LimViolID" not in df2.columns:
+            # If we do not have these, there is no point building a summary
             return None
 
-        cols = []
-        if ctg_col:
-            cols.append(ctg_col)
-        if elem_col:
-            cols.append(elem_col)
-        if from_bus_col:
-            cols.append(from_bus_col)
-        if to_bus_col:
-            cols.append(to_bus_col)
-        if limit_col:
-            cols.append(limit_col)
-        if value_col:
+        cols = ["CTGLabel", "LimViolID"]
+
+        # Limit column
+        if "LimViolLimit" in df2.columns:
+            cols.append("LimViolLimit")
+
+        # Actual value column: look for something like LimViolValue / LimViolMVA / LimViolVal…
+        value_col = None
+        for c in df2.columns:
+            cl = c.lower()
+            if "limviol" in cl and ("value" in cl or "val" in cl or "mva" in cl):
+                value_col = c
+                break
+        if value_col is not None and value_col not in cols:
             cols.append(value_col)
-        if percent_col:
+
+        # Percent column: CTGVioIMaxLine (or similar)
+        percent_col = None
+        for c in df2.columns:
+            cl = c.lower()
+            if "ctgvio" in cl and "maxline" in cl:
+                percent_col = c
+                break
+        if percent_col is not None and percent_col not in cols:
             cols.append(percent_col)
 
-        # Drop duplicates while keeping order
-        seen = set()
-        ordered_cols = []
-        for c in cols:
-            if c and c not in seen and c in filtered.columns:
-                seen.add(c)
-                ordered_cols.append(c)
+        # If we somehow still only have CTGLabel/LimViolID, return at least that
+        summary = df2[cols].copy()
 
-        if not ordered_cols:
-            return None
+        # Optional: sort by percent descending if present
+        if percent_col is not None:
+            try:
+                summary[percent_col] = pd.to_numeric(
+                    summary[percent_col], errors="coerce"
+                )
+                summary = summary.sort_values(by=percent_col, ascending=False)
+            except Exception:
+                pass
 
-        return filtered[ordered_cols]
+        return summary
 
 
 if __name__ == "__main__":
