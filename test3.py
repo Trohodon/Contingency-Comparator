@@ -1,241 +1,156 @@
 import os
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
-
-import win32com.client
 import pandas as pd
 
+def find_column(df, aliases):
+    """
+    Find a column in df whose name (lowercased) either matches or contains
+    one of the alias strings. Returns the column name or None.
+    """
+    cols_lower = {col.lower(): col for col in df.columns}
 
-class PwbExportApp(tk.Tk):
-    def __init__(self):
-        super().__init__()
+    # Exact matches first
+    for alias in aliases:
+        if alias in cols_lower:
+            return cols_lower[alias]
 
-        self.title("PowerWorld Contingency Results Export")
-        self.geometry("800x500")
+    # Then partial matches
+    for col in df.columns:
+        col_lower = col.lower()
+        for alias in aliases:
+            if alias in col_lower:
+                return col
+    return None
 
-        self.pwb_path = tk.StringVar(value="No .pwb file selected")
-        self.csv_path = None
 
-        self._build_gui()
+def main():
+    print("=== PowerWorld Test 2 Results Filter ===")
+    print("This will take your full Test 2 CSV and output a filtered CSV")
+    print("containing only Line / Transformer limit violations.\n")
 
-    # ───────────── GUI LAYOUT ───────────── #
+    # ---- 1. Ask user for input/output paths ----
+    input_path = input("Enter path to Test 2 CSV (press Enter for 'test2_output.csv'): ").strip()
+    if not input_path:
+        input_path = "test2_output.csv"
 
-    def _build_gui(self):
-        top = ttk.Frame(self)
-        top.pack(side=tk.TOP, fill=tk.X, padx=10, pady=10)
+    if not os.path.isfile(input_path):
+        print(f"\n[ERROR] File not found: {input_path}")
+        return
 
-        ttk.Label(top, text="Selected .pwb case:").grid(row=0, column=0, sticky="w")
-        ttk.Label(top, textvariable=self.pwb_path, width=80).grid(
-            row=1, column=0, columnspan=2, sticky="w"
-        )
+    default_output = "filtered_contingencies.csv"
+    output_path = input(f"Enter path for filtered CSV (press Enter for '{default_output}'): ").strip()
+    if not output_path:
+        output_path = default_output
 
-        browse_btn = ttk.Button(top, text="Browse...", command=self.browse_pwb)
-        browse_btn.grid(row=1, column=2, padx=(5, 0), sticky="e")
+    print(f"\n[INFO] Reading input file: {input_path}")
+    df = pd.read_csv(input_path)
 
-        run_btn = ttk.Button(
-            top,
-            text="Export existing contingency results",
-            command=self.run_export,
-        )
-        run_btn.grid(row=2, column=0, columnspan=3, pady=(10, 0), sticky="w")
+    print(f"[INFO] Loaded {len(df)} rows with {len(df.columns)} columns.")
+    print("[INFO] Columns found:")
+    for col in df.columns:
+        print(f"   - {col}")
+    print()
 
-        ttk.Separator(self, orient="horizontal").pack(fill=tk.X, padx=10, pady=5)
+    # ---- 2. Locate key columns (best-effort, flexible) ----
+    contingency_col = find_column(df, [
+        "contingency", "ctgname", "ctg_name", "contingency name"
+    ])
 
-        log_frame = ttk.Frame(self)
-        log_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=10, pady=10)
+    object_name_col = find_column(df, [
+        "device", "element", "branch", "object", "element name", "object name"
+    ])
 
-        ttk.Label(log_frame, text="Log:").pack(anchor="w")
+    from_bus_col = find_column(df, [
+        "from bus", "frombus", "bus from", "busfrom", "bus num from", "bus from num"
+    ])
 
-        self.log_text = tk.Text(log_frame, wrap="word", height=15)
-        self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    to_bus_col = find_column(df, [
+        "to bus", "tobus", "bus to", "busto", "bus num to", "bus to num"
+    ])
 
-        scroll = ttk.Scrollbar(
-            log_frame,
-            orient="vertical",
-            command=self.log_text.yview,
-        )
-        scroll.pack(side=tk.RIGHT, fill=tk.Y)
-        self.log_text.configure(yscrollcommand=scroll.set)
+    limit_col = find_column(df, [
+        "limit", "rating", "mw limit", "amp limit", "mva limit"
+    ])
 
-    def log(self, msg: str):
-        self.log_text.insert(tk.END, msg + "\n")
-        self.log_text.see(tk.END)
-        self.update_idletasks()
+    value_col = find_column(df, [
+        "value", "flow", "mw", "mvar", "amps", "mva"
+    ])
 
-    # ───────────── CALLBACKS ───────────── #
+    percent_col = find_column(df, [
+        "percent", "% of limit", "pct", "pctoflimit", "percent of limit"
+    ])
 
-    def browse_pwb(self):
-        path = filedialog.askopenfilename(
-            title="Select PowerWorld case (.pwb)",
-            filetypes=[("PowerWorld case", "*.pwb"), ("All files", "*.*")],
-        )
-        if path:
-            self.pwb_path.set(path)
-            self.csv_path = None
-            self.log(f"Selected case: {path}")
+    object_type_col = find_column(df, [
+        "objecttype", "object type", "category", "device type", "element type"
+    ])
 
-    def run_export(self):
-        pwb = self.pwb_path.get()
-        if not pwb.lower().endswith(".pwb") or not os.path.exists(pwb):
-            messagebox.showwarning(
-                "No case selected",
-                "Please select a valid .pwb file.",
-            )
-            return
+    print("[INFO] Mapped columns:")
+    print(f"   Contingency:  {contingency_col}")
+    print(f"   Element name: {object_name_col}")
+    print(f"   From bus:     {from_bus_col}")
+    print(f"   To bus:       {to_bus_col}")
+    print(f"   Limit:        {limit_col}")
+    print(f"   Value:        {value_col}")
+    print(f"   Percent:      {percent_col}")
+    print(f"   Object type:  {object_type_col}")
+    print()
 
-        base, _ = os.path.splitext(pwb)
-        csv_out = base + "_Violations.csv"
-        self.csv_path = csv_out
+    # ---- 3. Filter to lines / transformers (if we can) ----
+    if object_type_col is not None:
+        print("[INFO] Filtering rows to LINE / TRANSFORMER types using object type column...")
+        type_series = df[object_type_col].astype(str).str.lower()
 
-        try:
-            self._export_existing_results(pwb, csv_out)
-        except Exception as e:
-            self.log(f"ERROR: {e}")
-            messagebox.showerror("Error", str(e))
+        mask_type = type_series.str.contains("branch|line|xfmr|transformer", regex=True, na=False)
+        df = df[mask_type].copy()
+        print(f"[INFO] After type filter: {len(df)} rows remain.")
+    else:
+        print("[WARN] No object type column found. Skipping line/transformer filter.")
+        print("       (You may want to adjust the script once you know the exact column name.)")
 
-    # ────────── POWERWORLD EXPORT (existing results only) ────────── #
+    # ---- 4. Filter to actual violations using percent > 100, if we have that ----
+    if percent_col is not None:
+        print("[INFO] Filtering to actual limit violations where Percent > 100...")
+        # Convert to numeric safely
+        pct = pd.to_numeric(df[percent_col], errors="coerce")
+        df = df[pct > 100].copy()
+        print(f"[INFO] After violation filter: {len(df)} rows remain.")
+    else:
+        print("[WARN] No percent-of-limit column found. Keeping all rows (no violation filter).")
 
-    def _export_existing_results(self, pwb_path: str, csv_out: str):
-        self.log("Connecting to PowerWorld via SimAuto...")
-        simauto = win32com.client.Dispatch("pwrworld.SimulatorAuto")
-        self.log("Connected.")
+    # ---- 5. Build final output dataframe with just the columns you care about ----
+    selected_cols = []
+    col_order = [
+        ("Contingency", contingency_col),
+        ("Element", object_name_col),
+        ("FromBus", from_bus_col),
+        ("ToBus", to_bus_col),
+        ("Limit", limit_col),
+        ("Value", value_col),
+        ("PercentOfLimit", percent_col)
+    ]
 
-        # 1) Open case – contingencies already solved
-        self.log(f"Opening case: {pwb_path}")
-        (err,) = simauto.OpenCase(pwb_path)
-        if err:
-            raise RuntimeError(f"OpenCase error: {err}")
-        self.log("Case opened successfully (existing results will be used).")
-
-        # 2) Enter Contingency mode
-        self.log("Entering Contingency mode...")
-        (err,) = simauto.RunScriptCommand("EnterMode(Contingency);")
-        if err:
-            raise RuntimeError(f"EnterMode(Contingency) error: {err}")
-
-        # 3) Export violation matrices for branches (lines + xfmrs)
-        self.log(f"Saving stored violation matrices to CSV:\n  {csv_out}")
-        clean_csv = csv_out.replace("\\", "/")
-        cmd = (
-            f'CTGSaveViolationMatrices("{clean_csv}", CSVCOLHEADER, '
-            "YES, [BRANCH], YES, NO);"
-        )
-        (err,) = simauto.RunScriptCommand(cmd)
-        if err:
-            raise RuntimeError(f"CTGSaveViolationMatrices error: {err}")
-        self.log("CSV export complete (using existing CA results).")
-
-        # Close SimAuto
-        try:
-            simauto.CloseCase()
-        except Exception:
-            pass
-        del simauto
-
-        # 4) Load raw CSV and build summary
-        if os.path.exists(csv_out):
-            self.log("\nPreview of first few rows (raw CTG matrix):")
-            try:
-                df = pd.read_csv(csv_out)
-                self.log(df.head(5).to_string(index=False))
-
-                summary = self._build_branch_summary(df)
-
-                if summary is not None and not summary.empty:
-                    summary_path = csv_out.replace(".csv", "_summary.csv")
-                    summary.to_csv(summary_path, index=False)
-
-                    self.log("\nSaved filtered line/transformer summary to:")
-                    self.log(f"  {summary_path}")
-                    self.log("\nPreview of summary (first 20 rows):")
-                    self.log(summary.head(20).to_string(index=False))
-                else:
-                    self.log(
-                        "\nNo matching Branch MVA rows found, "
-                        "or required columns were missing."
-                    )
-
-            except Exception as e:
-                self.log(f"(Could not read or summarize CSV: {e})")
+    for friendly_name, real_col in col_order:
+        if real_col is not None:
+            df[friendly_name] = df[real_col]
+            selected_cols.append(friendly_name)
         else:
-            self.log("WARNING: CSV file does not exist after export.")
+            print(f"[WARN] Could not find column for: {friendly_name}")
 
-        messagebox.showinfo(
-            "Done",
-            f"Violations exported to:\n{csv_out}\n\n"
-            f"Filtered summary (lines/transformers) is in:\n"
-            f"{csv_out.replace('.csv', '_summary.csv')}",
-        )
+    if not selected_cols:
+        print("[ERROR] No output columns could be mapped. Nothing to write.")
+        return
 
-    # ────────── SUMMARY BUILDER ────────── #
+    filtered_df = df[selected_cols].copy()
 
-    def _build_branch_summary(self, df: pd.DataFrame):
-        """
-        Build a compact summary for line/transformer contingencies using
-        the specific columns you requested:
+    # ---- 6. Sort by highest percent violation (if we have it) ----
+    if "PercentOfLimit" in filtered_df.columns:
+        filtered_df["PercentOfLimit"] = pd.to_numeric(filtered_df["PercentOfLimit"], errors="coerce")
+        filtered_df = filtered_df.sort_values(by="PercentOfLimit", ascending=False)
 
-        - Contingency        (from CTGLabel)
-        - LineID             (from LimViolID)
-        - Limit_MVA          (from LimViolLimit)
-        - Flow_MVA           (computed = Limit_MVA * Percent / 100)
-        - PercentOfLimit     (from CTGVioIMaxLine)
-        """
-
-        if df is None or df.empty:
-            return None
-
-        df2 = df.copy()
-
-        # Only keep Branch MVA rows if LimViolCat exists
-        if "LimViolCat" in df2.columns:
-            mask = df2["LimViolCat"].astype(str).str.contains(
-                "Branch MVA", case=False, na=False
-            )
-            df2 = df2[mask]
-
-        if df2.empty:
-            return None
-
-        required = ["CTGLabel", "LimViolID", "LimViolLimit", "CTGVioIMaxLine"]
-        missing = [c for c in required if c not in df2.columns]
-        if missing:
-            # If something is missing, bail out so you know about it
-            self.log(f"Required columns missing from CSV: {missing}")
-            return None
-
-        # Drop rows where LimViolID is blank (no actual violated element)
-        df2 = df2[df2["LimViolID"].astype(str).str.strip() != ""]
-        if df2.empty:
-            return None
-
-        # Convert numeric columns
-        df2["LimViolLimit"] = pd.to_numeric(df2["LimViolLimit"], errors="coerce")
-        df2["CTGVioIMaxLine"] = pd.to_numeric(
-            df2["CTGVioIMaxLine"], errors="coerce"
-        )
-
-        # Compute actual flow MVA from limit * percent / 100
-        df2["Flow_MVA"] = df2["LimViolLimit"] * df2["CTGVioIMaxLine"] / 100.0
-
-        # Build the final summary table with nice column names
-        summary = pd.DataFrame(
-            {
-                "Contingency": df2["CTGLabel"],
-                "LineID": df2["LimViolID"],
-                "Limit_MVA": df2["LimViolLimit"],
-                "Flow_MVA": df2["Flow_MVA"],
-                "PercentOfLimit": df2["CTGVioIMaxLine"],
-            }
-        )
-
-        # Sort by highest loading first
-        summary = summary.sort_values(
-            by=["PercentOfLimit", "Contingency"], ascending=[False, True]
-        )
-
-        return summary
+    # ---- 7. Save result ----
+    filtered_df.to_csv(output_path, index=False)
+    print(f"\n[DONE] Wrote {len(filtered_df)} filtered violation rows to:")
+    print(f"       {output_path}\n")
 
 
 if __name__ == "__main__":
-    app = PwbExportApp()
-    app.mainloop()
+    main()
