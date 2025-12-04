@@ -1,319 +1,230 @@
-import os
 import csv
-import datetime
+import os
+import traceback
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext
 
-import win32com.client
+
+def log(msg, log_widget=None):
+    """Append a line to the log box and print to console."""
+    print(msg)
+    if log_widget is not None:
+        log_widget.insert(tk.END, msg + "\n")
+        log_widget.see(tk.END)
+        log_widget.update_idletasks()
 
 
-# -------------------------- Core PowerWorld Logic -------------------------- #
-
-def parse_simauto_error(result):
+def find_column(headers, candidates):
     """
-    PowerWorld SimAuto often returns ('',) on success, or ('some error',).
-    This helper normalizes that into a simple string.
+    Find the first header that contains any of the candidate substrings
+    (case-insensitive). Returns the header name or None.
     """
-    if isinstance(result, (list, tuple)):
-        if len(result) == 0:
-            return ""
-        return result[0] or ""
-    return result or ""
+    lower_headers = [h.lower() for h in headers]
+    for cand in candidates:
+        cand_lower = cand.lower()
+        for h, lh in zip(headers, lower_headers):
+            if cand_lower in lh:
+                return h
+    return None
 
 
-def open_case(simauto, case_path, log):
-    """Open a PowerWorld case and log any errors."""
-    log(f"Opening case: {case_path}")
-    result = simauto.OpenCase(case_path)
-    log(f"[DEBUG] OpenCase raw return: {result!r}")
-
-    err = parse_simauto_error(result)
-    if err:
-        log(f"[ERROR] OpenCase returned error: {err}")
-        raise RuntimeError(f"PowerWorld OpenCase error: {err}")
-
-    log("Case opened successfully.")
-
-
-def get_branch_results(simauto, log):
+def filter_ctg_csv(input_path, log_widget=None, pct_threshold=100.0):
     """
-    Pull contingency branch results (lines/transformers) from PowerWorld.
+    Read a big contingency RESULTS CSV (TEST2 output),
+    filter to line/transformer violations, and write a new CSV.
 
-    We use the CTG_Results_Branch table which already ONLY contains
-    branch elements (lines/transformers).
-
-    Handles both 2-value and 3-value return formats from SimAuto:
-      (error, values)          -- older versions
-      (error, fields, values)  -- newer versions
+    pct_threshold: keep rows where PercentOfLimit >= pct_threshold.
     """
-    table_name = "CTG_Results_Branch"
+    log(f"Loading CSV: {input_path}", log_widget)
 
-    # Fields we ask PowerWorld for. These names are standard for this table.
-    fields = [
-        "CTGName",   # Contingency name
-        "BusNum",    # From bus number
-        "BusNum:1",  # To bus number
-        "LineID",    # Circuit ID / line ID
-        "Limit",     # Limit value
-        "MW",        # Flow in MW (violation value)
-        "PctOfLimit" # Percent of limit
+    if not os.path.isfile(input_path):
+        raise FileNotFoundError(f"Input file not found: {input_path}")
+
+    with open(input_path, "r", newline="", encoding="utf-8-sig") as f_in:
+        reader = csv.DictReader(f_in)
+        headers = reader.fieldnames
+        if headers is None:
+            raise ValueError("CSV appears to have no header row.")
+
+        log(f"Detected {len(headers)} columns.", log_widget)
+        log("Headers:\n  " + "\n  ".join(headers), log_widget)
+
+        # Try to auto-detect useful columns
+        col_ctg = find_column(headers, ["ctg name", "contingency", "ctg"])
+        col_type = find_column(headers, ["object type", "element type", "device type", "type"])
+        col_from = find_column(headers, ["from bus name", "frombus", "from bus", "from name"])
+        col_to = find_column(headers, ["to bus name", "tobus", "to bus", "to name"])
+        col_limit = find_column(headers, ["limit", "rating"])
+        col_value = find_column(headers, ["value", "flow", "actual"])
+        col_pct = find_column(headers, ["pctoflimit", "% of limit", "% limit", "percent"])
+
+        # Log what we found
+        log("\nDetected columns:", log_widget)
+        log(f"  Contingency : {col_ctg}", log_widget)
+        log(f"  Type        : {col_type}", log_widget)
+        log(f"  From bus    : {col_from}", log_widget)
+        log(f"  To bus      : {col_to}", log_widget)
+        log(f"  Limit       : {col_limit}", log_widget)
+        log(f"  Value       : {col_value}", log_widget)
+        log(f"  % of limit  : {col_pct}", log_widget)
+
+        # Basic sanity check
+        required_for_output = [col_ctg, col_from, col_to, col_limit, col_value, col_pct]
+        if any(c is None for c in required_for_output):
+            missing = [name for name, c in zip(
+                ["Contingency", "FromBus", "ToBus", "Limit", "Value", "PctOfLimit"],
+                required_for_output
+            ) if c is None]
+            raise ValueError(
+                "Could not auto-detect some necessary columns.\n"
+                f"Missing logical columns: {', '.join(missing)}.\n"
+                "Check the header names in your TEST2 CSV or send me a screenshot of the first few lines."
+            )
+
+        rows_out = []
+
+        # Loop over rows and apply filters
+        for row in reader:
+            # Filter by type (line/xfmr)
+            if col_type is not None:
+                obj_type = (row.get(col_type, "") or "").lower()
+                # Only keep lines/transformers
+                if not any(key in obj_type for key in ["branch", "line", "xfmr", "transformer"]):
+                    continue
+
+            # Filter by Percent of Limit
+            pct_raw = (row.get(col_pct, "") or "").strip()
+            try:
+                pct_val = float(pct_raw)
+            except ValueError:
+                # If it cannot be parsed, skip it (likely blank / non-violation)
+                continue
+
+            if pct_val < pct_threshold:
+                continue
+
+            # Build output row
+            from_bus = (row.get(col_from, "") or "").strip()
+            to_bus = (row.get(col_to, "") or "").strip()
+
+            out_row = {
+                "Contingency": (row.get(col_ctg, "") or "").strip(),
+                "ElementType": (row.get(col_type, "") or "").strip() if col_type else "",
+                "FromBus": from_bus,
+                "ToBus": to_bus,
+                "From->To": f"{from_bus} -> {to_bus}",
+                "Limit": (row.get(col_limit, "") or "").strip(),
+                "Value": (row.get(col_value, "") or "").strip(),
+                "PercentOfLimit": pct_raw,
+            }
+            rows_out.append(out_row)
+
+    if not rows_out:
+        log("\nNo rows matched the filter (line/xfmr & percent >= threshold).", log_widget)
+    else:
+        log(f"\nFiltered down to {len(rows_out)} rows.", log_widget)
+
+    # Build output path
+    base, ext = os.path.splitext(input_path)
+    output_path = base + "_filtered_lines.csv"
+
+    # Write output CSV
+    fieldnames = [
+        "Contingency",
+        "ElementType",
+        "FromBus",
+        "ToBus",
+        "From->To",
+        "Limit",
+        "Value",
+        "PercentOfLimit",
     ]
 
-    log(f"Requesting contingency results from table '{table_name}'...")
+    with open(output_path, "w", newline="", encoding="utf-8") as f_out:
+        writer = csv.DictWriter(f_out, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows_out)
 
-    ret = simauto.GetParametersMultipleElement(
-        table_name,
-        fields,
-        ""  # empty filter = all rows
-    )
-    log(f"[DEBUG] GetParametersMultipleElement raw return: {ret!r}")
+    log(f"\nFiltered CSV written to:\n  {output_path}", log_widget)
+    return output_path
 
-    # Normalize return into (error, values, returned_fields)
-    returned_fields = None
-    if isinstance(ret, (list, tuple)):
-        if len(ret) == 3:
-            error, returned_fields, values = ret
-        elif len(ret) == 2:
-            error, values = ret
-        else:
-            raise RuntimeError(
-                f"Unexpected GetParametersMultipleElement return format: {ret!r}"
-            )
-    else:
-        raise RuntimeError(
-            f"Unexpected GetParametersMultipleElement return type: {type(ret)}"
+
+# =========================
+# Tkinter GUI
+# =========================
+
+class CTGFilterApp(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("Contingency Results Filter (Lines/Transformers)")
+        self.geometry("800x450")
+
+        self.input_path_var = tk.StringVar()
+        self.pct_threshold_var = tk.StringVar(value="100")  # default 100%
+
+        self.create_widgets()
+
+    def create_widgets(self):
+        # Input file selector
+        frm_top = tk.Frame(self)
+        frm_top.pack(fill=tk.X, padx=10, pady=10)
+
+        tk.Label(frm_top, text="TEST2 CSV file:").grid(row=0, column=0, sticky="w")
+
+        ent = tk.Entry(frm_top, textvariable=self.input_path_var)
+        ent.grid(row=0, column=1, sticky="we", padx=5)
+        frm_top.columnconfigure(1, weight=1)
+
+        btn_browse = tk.Button(frm_top, text="Browse...", command=self.browse_file)
+        btn_browse.grid(row=0, column=2, padx=5)
+
+        # Threshold
+        tk.Label(frm_top, text="Min % of Limit (>=):").grid(row=1, column=0, sticky="w", pady=(8, 0))
+        tk.Entry(frm_top, textvariable=self.pct_threshold_var, width=8).grid(
+            row=1, column=1, sticky="w", pady=(8, 0)
         )
 
-    err = parse_simauto_error(error)
-    if err:
-        log(f"[ERROR] GetParametersMultipleElement returned error: {err}")
-        raise RuntimeError(f"PowerWorld GetParametersMultipleElement error: {err}")
+        # Run button
+        btn_run = tk.Button(frm_top, text="Run Filter", command=self.run_filter, width=15)
+        btn_run.grid(row=1, column=2, padx=5, pady=(8, 0))
 
-    log(f"Returned {len(values)} branch result rows.")
-    return values  # list of lists in the same order as 'fields'
+        # Log area
+        tk.Label(self, text="Log:").pack(anchor="w", padx=10)
+        self.txt_log = scrolledtext.ScrolledText(self, height=18)
+        self.txt_log.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
 
-
-def write_test1_overview(values, output_path, log):
-    """
-    Test 1: simple overview.
-    Columns: Contingency, Element (From->To LineID), PercentOfLimit
-    """
-    log(f"Writing Test 1 overview CSV: {output_path}")
-    with open(output_path, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["Contingency", "Element", "PercentOfLimit"])
-
-        for row in values:
-            # row = [CTGName, BusNum, BusNum:1, LineID, Limit, MW, PctOfLimit]
-            ctg_name = row[0]
-            bus_from = row[1]
-            bus_to   = row[2]
-            line_id  = row[3]
-            pct      = row[6]
-
-            element = f"{bus_from}->{bus_to} {line_id}"
-            writer.writerow([ctg_name, element, pct])
-
-    log(f"Test 1 CSV written with {len(values)} rows.")
-
-
-def write_test2_filtered(values, output_path, log):
-    """
-    Test 2: filtered detailed branch/transformer info.
-    Columns:
-      Contingency, FromBus, ToBus, LineID, Limit, ValueMW, PercentOfLimit
-    """
-    log(f"Writing Test 2 filtered CSV: {output_path}")
-    with open(output_path, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow([
-            "Contingency",
-            "FromBus",
-            "ToBus",
-            "LineID",
-            "Limit",
-            "ValueMW",
-            "PercentOfLimit"
-        ])
-
-        for row in values:
-            # row = [CTGName, BusNum, BusNum:1, LineID, Limit, MW, PctOfLimit]
-            ctg_name = row[0]
-            bus_from = row[1]
-            bus_to   = row[2]
-            line_id  = row[3]
-            limit    = row[4]
-            mw_val   = row[5]
-            pct      = row[6]
-
-            writer.writerow([
-                ctg_name,
-                bus_from,
-                bus_to,
-                line_id,
-                limit,
-                mw_val,
-                pct
-            ])
-
-    log(f"Test 2 CSV written with {len(values)} rows.")
-
-
-def run_test(case_path, test_type, log):
-    """
-    Connects to PowerWorld, opens the case, pulls branch results,
-    and writes the CSV according to test_type: 'test1' or 'test2'.
-    """
-    if not os.path.isfile(case_path):
-        raise FileNotFoundError(f"Case not found: {case_path}")
-
-    # Build an output filename next to the .pwb
-    base_dir = os.path.dirname(case_path)
-    base_name = os.path.splitext(os.path.basename(case_path))[0]
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-
-    if test_type == "test1":
-        out_name = f"{base_name}_CTG_Test1_Overview_{timestamp}.csv"
-    else:
-        out_name = f"{base_name}_CTG_Test2_Filtered_{timestamp}.csv"
-
-    output_path = os.path.join(base_dir, out_name)
-
-    # Connect to SimAuto
-    log("Connecting to PowerWorld SimAuto...")
-    simauto = win32com.client.Dispatch("pwrworld.SimulatorAuto")
-
-    try:
-        open_case(simauto, case_path, log)
-        values = get_branch_results(simauto, log)
-
-        if test_type == "test1":
-            write_test1_overview(values, output_path, log)
-        else:
-            write_test2_filtered(values, output_path, log)
-
-        log(f"[DONE] Output file created:\n{output_path}")
-        return output_path
-
-    finally:
-        try:
-            log("Closing case in PowerWorld...")
-            close_result = simauto.CloseCase()
-            log(f"[DEBUG] CloseCase raw return: {close_result!r}")
-            log("Case closed.")
-        except Exception as e:
-            log(f"[WARN] Error while closing case: {e}")
-        simauto = None
-
-
-# -------------------------- GUI Definition -------------------------- #
-
-class PowerWorldGUI:
-    def __init__(self, master):
-        self.master = master
-        self.master.title("PowerWorld Contingency Results Viewer")
-
-        # ------------- Case selection ------------- #
-        frame_top = tk.Frame(master)
-        frame_top.pack(fill="x", padx=10, pady=5)
-
-        tk.Label(frame_top, text="Case (.pwb):").grid(row=0, column=0, sticky="w")
-        self.case_entry = tk.Entry(frame_top, width=60)
-        self.case_entry.grid(row=0, column=1, padx=5)
-
-        browse_btn = tk.Button(frame_top, text="Browse...", command=self.browse_case)
-        browse_btn.grid(row=0, column=2, padx=5)
-
-        # ------------- Buttons for Test 1 / Test 2 ------------- #
-        frame_buttons = tk.Frame(master)
-        frame_buttons.pack(fill="x", padx=10, pady=5)
-
-        self.btn_test1 = tk.Button(
-            frame_buttons,
-            text="Run Test 1 (Simple Overview)",
-            command=self.run_test1_clicked
+    def browse_file(self):
+        path = filedialog.askopenfilename(
+            title="Select TEST2 contingency results CSV",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
         )
-        self.btn_test1.pack(side="left", padx=5)
+        if path:
+            self.input_path_var.set(path)
 
-        self.btn_test2 = tk.Button(
-            frame_buttons,
-            text="Run Test 2 (Filtered Lines/Transformers)",
-            command=self.run_test2_clicked
-        )
-        self.btn_test2.pack(side="left", padx=5)
-
-        # ------------- Log window ------------- #
-        frame_log = tk.Frame(master)
-        frame_log.pack(fill="both", expand=True, padx=10, pady=5)
-
-        tk.Label(frame_log, text="Log:").pack(anchor="w")
-
-        self.log_text = scrolledtext.ScrolledText(frame_log, height=15, state="disabled")
-        self.log_text.pack(fill="both", expand=True)
-
-    # ------------------------- GUI Helper Methods ------------------------- #
-
-    def log(self, message: str):
-        """Append a message to the log text box."""
-        self.log_text.config(state="normal")
-        self.log_text.insert("end", message + "\n")
-        self.log_text.see("end")
-        self.log_text.config(state="disabled")
-        print(message)  # also print to console
-
-    def browse_case(self):
-        """Open file dialog to select a .pwb case file."""
-        filename = filedialog.askopenfilename(
-            title="Select PowerWorld Case",
-            filetypes=[("PowerWorld Case", "*.pwb"), ("All files", "*.*")]
-        )
-        if filename:
-            self.case_entry.delete(0, "end")
-            self.case_entry.insert(0, filename)
-
-    def disable_buttons(self):
-        self.btn_test1.config(state="disabled")
-        self.btn_test2.config(state="disabled")
-
-    def enable_buttons(self):
-        self.btn_test1.config(state="normal")
-        self.btn_test2.config(state="normal")
-
-    def run_test_common(self, test_type: str):
-        """Shared logic for running Test 1 or Test 2."""
-        case_path = self.case_entry.get().strip()
-        if not case_path:
-            messagebox.showerror("Error", "Please select a .pwb case file first.")
+    def run_filter(self):
+        input_path = self.input_path_var.get().strip()
+        if not input_path:
+            messagebox.showerror("Error", "Please select a TEST2 CSV file first.")
             return
 
-        self.log("\n" + "=" * 70)
-        self.log(f"Starting {test_type.upper()} on case: {case_path}")
-        self.disable_buttons()
-        self.master.update_idletasks()
-
         try:
-            output_path = run_test(case_path, test_type, self.log)
-            messagebox.showinfo(
-                "Done",
-                f"{test_type.upper()} completed successfully.\n\nOutput file:\n{output_path}"
-            )
+            pct_str = self.pct_threshold_var.get().strip()
+            pct_threshold = float(pct_str)
+        except ValueError:
+            messagebox.showerror("Error", f"Invalid percent threshold: {self.pct_threshold_var.get()}")
+            return
+
+        self.txt_log.delete("1.0", tk.END)
+        try:
+            out_path = filter_ctg_csv(input_path, log_widget=self.txt_log, pct_threshold=pct_threshold)
+            messagebox.showinfo("Done", f"Filtered results written to:\n{out_path}")
         except Exception as e:
-            self.log(f"[EXCEPTION] {e}")
-            messagebox.showerror("Error", str(e))
-        finally:
-            self.enable_buttons()
+            err_text = "".join(traceback.format_exception_only(type(e), e)).strip()
+            log("\n[ERROR] " + err_text, self.txt_log)
+            log(traceback.format_exc(), self.txt_log)
+            messagebox.showerror("Error", f"Filtering failed:\n{err_text}")
 
-    def run_test1_clicked(self):
-        self.run_test_common("test1")
-
-    def run_test2_clicked(self):
-        # This is the one you care about: line/transformer filtered output
-        self.run_test_common("test2")
-
-
-# -------------------------- Program Entry Point -------------------------- #
 
 if __name__ == "__main__":
-    root = tk.Tk()
-    app = PowerWorldGUI(root)
-    root.mainloop()
+    app = CTGFilterApp()
+    app.mainloop()
