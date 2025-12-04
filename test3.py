@@ -41,6 +41,10 @@ def get_branch_results(simauto, log):
 
     We use the CTG_Results_Branch table which already ONLY contains
     branch elements (lines/transformers).
+
+    Handles both 2-value and 3-value return formats from SimAuto:
+      (error, values)          -- older versions
+      (error, fields, values)  -- newer versions
     """
     table_name = "CTG_Results_Branch"
 
@@ -56,13 +60,29 @@ def get_branch_results(simauto, log):
     ]
 
     log(f"Requesting contingency results from table '{table_name}'...")
-    error, returned_fields, values = simauto.GetParametersMultipleElement(
+
+    ret = simauto.GetParametersMultipleElement(
         table_name,
         fields,
         ""  # empty filter = all rows
     )
+    log(f"[DEBUG] GetParametersMultipleElement raw return: {ret!r}")
 
-    log(f"[DEBUG] GetParametersMultipleElement error return: {error!r}")
+    # Normalize return into (error, values, returned_fields)
+    returned_fields = None
+    if isinstance(ret, (list, tuple)):
+        if len(ret) == 3:
+            error, returned_fields, values = ret
+        elif len(ret) == 2:
+            error, values = ret
+        else:
+            raise RuntimeError(
+                f"Unexpected GetParametersMultipleElement return format: {ret!r}"
+            )
+    else:
+        raise RuntimeError(
+            f"Unexpected GetParametersMultipleElement return type: {type(ret)}"
+        )
 
     err = parse_simauto_error(error)
     if err:
@@ -178,7 +198,6 @@ def run_test(case_path, test_type, log):
     finally:
         try:
             log("Closing case in PowerWorld...")
-            # CloseCase also returns ('',) on success
             close_result = simauto.CloseCase()
             log(f"[DEBUG] CloseCase raw return: {close_result!r}")
             log("Case closed.")
