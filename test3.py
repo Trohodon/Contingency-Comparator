@@ -102,14 +102,14 @@ class PwbExportApp(tk.Tk):
 
         # 1) Open case – we assume contingencies are already solved in this file
         self.log(f"Opening case: {pwb_path}")
-        err, = simauto.OpenCase(pwb_path)
+        (err,) = simauto.OpenCase(pwb_path)
         if err:
             raise RuntimeError(f"OpenCase error: {err}")
         self.log("Case opened successfully (existing results will be used).")
 
         # 2) Go to Contingency mode (does NOT re-run analysis)
         self.log("Entering Contingency mode...")
-        err, = simauto.RunScriptCommand("EnterMode(Contingency);")
+        (err,) = simauto.RunScriptCommand("EnterMode(Contingency);")
         if err:
             raise RuntimeError(f"EnterMode(Contingency) error: {err}")
 
@@ -118,14 +118,18 @@ class PwbExportApp(tk.Tk):
         clean_csv = csv_out.replace("\\", "/")
         cmd = (
             f'CTGSaveViolationMatrices("{clean_csv}", CSVCOLHEADER, '
-            'YES, [BRANCH], YES, NO);'
+            "YES, [BRANCH], YES, NO);"
         )
-        err, = simauto.RunScriptCommand(cmd)
+        (err,) = simauto.RunScriptCommand(cmd)
         if err:
             raise RuntimeError(f"CTGSaveViolationMatrices error: {err}")
         self.log("CSV export complete (using existing CA results).")
 
         # Close SimAuto
+        try:
+            simauto.CloseCase()
+        except Exception:
+            pass
         del simauto
 
         # 4) Load the raw CSV and build a filtered summary
@@ -141,7 +145,7 @@ class PwbExportApp(tk.Tk):
                     summary_path = csv_out.replace(".csv", "_summary.csv")
                     summary.to_csv(summary_path, index=False)
 
-                    self.log(f"\nSaved filtered line/transformer summary to:")
+                    self.log("\nSaved filtered line/transformer summary to:")
                     self.log(f"  {summary_path}")
                     self.log("\nPreview of summary (first 20 rows):")
                     self.log(summary.head(20).to_string(index=False))
@@ -165,7 +169,7 @@ class PwbExportApp(tk.Tk):
 
     # ────────── SUMMARY BUILDER ────────── #
 
-    def _build_branch_summary(self, df: pd.DataFrame) -> pd.DataFrame | None:
+    def _build_branch_summary(self, df: pd.DataFrame):
         """
         Build a compact summary for line/transformer contingencies:
         - Contingency name
@@ -237,6 +241,7 @@ class PwbExportApp(tk.Tk):
                 type_col = c
                 break
 
+        # Start with all rows
         mask = pd.Series(True, index=df2.index)
 
         # Restrict to branches (lines/transformers) if type column exists
