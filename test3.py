@@ -9,14 +9,29 @@ import win32com.client
 
 # -------------------------- Core PowerWorld Logic -------------------------- #
 
+def parse_simauto_error(result):
+    """
+    PowerWorld SimAuto often returns ('',) on success, or ('some error',).
+    This helper normalizes that into a simple string.
+    """
+    if isinstance(result, (list, tuple)):
+        if len(result) == 0:
+            return ""
+        return result[0] or ""
+    return result or ""
+
+
 def open_case(simauto, case_path, log):
     """Open a PowerWorld case and log any errors."""
     log(f"Opening case: {case_path}")
     result = simauto.OpenCase(case_path)
-    if result:
-        # PowerWorld returns an error string if something went wrong
-        log(f"[ERROR] OpenCase returned: {result}")
-        raise RuntimeError(f"PowerWorld OpenCase error: {result}")
+    log(f"[DEBUG] OpenCase raw return: {result!r}")
+
+    err = parse_simauto_error(result)
+    if err:
+        log(f"[ERROR] OpenCase returned error: {err}")
+        raise RuntimeError(f"PowerWorld OpenCase error: {err}")
+
     log("Case opened successfully.")
 
 
@@ -47,9 +62,12 @@ def get_branch_results(simauto, log):
         ""  # empty filter = all rows
     )
 
-    if error:
-        log(f"[ERROR] GetParametersMultipleElement returned: {error}")
-        raise RuntimeError(f"PowerWorld GetParametersMultipleElement error: {error}")
+    log(f"[DEBUG] GetParametersMultipleElement error return: {error!r}")
+
+    err = parse_simauto_error(error)
+    if err:
+        log(f"[ERROR] GetParametersMultipleElement returned error: {err}")
+        raise RuntimeError(f"PowerWorld GetParametersMultipleElement error: {err}")
 
     log(f"Returned {len(values)} branch result rows.")
     return values  # list of lists in the same order as 'fields'
@@ -160,7 +178,9 @@ def run_test(case_path, test_type, log):
     finally:
         try:
             log("Closing case in PowerWorld...")
-            simauto.CloseCase()
+            # CloseCase also returns ('',) on success
+            close_result = simauto.CloseCase()
+            log(f"[DEBUG] CloseCase raw return: {close_result!r}")
             log("Case closed.")
         except Exception as e:
             log(f"[WARN] Error while closing case: {e}")
@@ -220,7 +240,7 @@ class PowerWorldGUI:
         self.log_text.insert("end", message + "\n")
         self.log_text.see("end")
         self.log_text.config(state="disabled")
-        print(message)  # also print to console for debugging if run from terminal
+        print(message)  # also print to console
 
     def browse_case(self):
         """Open file dialog to select a .pwb case file."""
