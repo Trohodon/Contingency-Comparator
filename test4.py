@@ -3,59 +3,51 @@ from tkinter import ttk, filedialog, messagebox
 import pandas as pd
 import numpy as np
 
-# -----------------------------
-# HARDCODED LEGEND (from your screenshot)
-# High Side V, Low Side V, Size MVA -> Copper/Core losses
-# -----------------------------
+
 LEGEND_ROWS = [
-    # 230 kV high side
-    {"High_kV": 230, "Low_kV": 115, "MVA": 336,   "Copper_W": 150000, "Core_W": 100000},
-    {"High_kV": 230, "Low_kV": 115, "MVA": 224,   "Copper_W": 120000, "Core_W":  80000},
-    {"High_kV": 230, "Low_kV":  46, "MVA":  28,   "Copper_W":  80000, "Core_W":  40000},
-    {"High_kV": 230, "Low_kV":  33, "MVA":  93.3, "Copper_W":  47000, "Core_W":  11500},
-    {"High_kV": 230, "Low_kV":  23, "MVA":  37.3, "Copper_W":  66500, "Core_W":  23000},
-    {"High_kV": 230, "Low_kV":  13, "MVA":  56,   "Copper_W":  57000, "Core_W":  29000},
+    {"High_kV": 230, "Low_kV": 115, "MVA": 336,  "Copper_W": 150000, "Core_W": 100000},
+    {"High_kV": 230, "Low_kV": 115, "MVA": 224,  "Copper_W": 120000, "Core_W":  80000},
+    {"High_kV": 230, "Low_kV":  46, "MVA":  28,  "Copper_W":  80000, "Core_W":  40000},
+    {"High_kV": 230, "Low_kV":  33, "MVA":  93.3,"Copper_W":  47000, "Core_W":  11500},
+    {"High_kV": 230, "Low_kV":  23, "MVA":  37.3,"Copper_W":  66500, "Core_W":  23000},
+    {"High_kV": 230, "Low_kV":  13, "MVA":  56,  "Copper_W":  57000, "Core_W":  29000},
 
-    # 115 kV high side
-    {"High_kV": 115, "Low_kV":  46, "MVA":  28,   "Copper_W":  50000, "Core_W":  12000},
-    {"High_kV": 115, "Low_kV":  33, "MVA":  50,   "Copper_W":  50000, "Core_W":  19000},
-    {"High_kV": 115, "Low_kV":  23, "MVA":  37.3, "Copper_W":  55000, "Core_W":  18000},
-    {"High_kV": 115, "Low_kV":  23, "MVA":  28,   "Copper_W":  45000, "Core_W":  15000},
-    {"High_kV": 115, "Low_kV":  23, "MVA":  22.4, "Copper_W":  40000, "Core_W":  14000},
-    {"High_kV": 115, "Low_kV":  23, "MVA":  10.5, "Copper_W":  30000, "Core_W":  11000},
-    {"High_kV": 115, "Low_kV":  13, "MVA":  22.4, "Copper_W":  42000, "Core_W":  11000},
-    {"High_kV": 115, "Low_kV":   8, "MVA":  22.4, "Copper_W":  40000, "Core_W":  11000},
-    {"High_kV": 115, "Low_kV":   4, "MVA":  22.4, "Copper_W":  40000, "Core_W":  11000},
+    {"High_kV": 115, "Low_kV":  46, "MVA":  28,  "Copper_W":  50000, "Core_W":  12000},
+    {"High_kV": 115, "Low_kV":  33, "MVA":  50,  "Copper_W":  50000, "Core_W":  19000},
+    {"High_kV": 115, "Low_kV":  23, "MVA":  37.3,"Copper_W":  55000, "Core_W":  18000},
+    {"High_kV": 115, "Low_kV":  23, "MVA":  28,  "Copper_W":  45000, "Core_W":  15000},
+    {"High_kV": 115, "Low_kV":  23, "MVA":  22.4,"Copper_W":  40000, "Core_W":  14000},
+    {"High_kV": 115, "Low_kV":  23, "MVA":  10.5,"Copper_W":  30000, "Core_W":  11000},
+    {"High_kV": 115, "Low_kV":  13, "MVA":  22.4,"Copper_W":  42000, "Core_W":  11000},
+    {"High_kV": 115, "Low_kV":   8, "MVA":  22.4,"Copper_W":  40000, "Core_W":  11000},
+    {"High_kV": 115, "Low_kV":   4, "MVA":  22.4,"Copper_W":  40000, "Core_W":  11000},
 
-    # 46 kV high side
-    {"High_kV":  46, "Low_kV":  23, "MVA":  10.5, "Copper_W":  35000, "Core_W":  10000},
-    {"High_kV":  46, "Low_kV":  13, "MVA":  10.5, "Copper_W":  33000, "Core_W":   7000},
-    {"High_kV":  46, "Low_kV":   8, "MVA":  10.5, "Copper_W":  25000, "Core_W":   6000},
-    {"High_kV":  46, "Low_kV":  0.5,"MVA":   3,   "Copper_W":  12000, "Core_W":   5800},
+    {"High_kV":  46, "Low_kV":  23, "MVA":  10.5,"Copper_W":  35000, "Core_W":  10000},
+    {"High_kV":  46, "Low_kV":  13, "MVA":  10.5,"Copper_W":  33000, "Core_W":   7000},
+    {"High_kV":  46, "Low_kV":   8, "MVA":  10.5,"Copper_W":  25000, "Core_W":   6000},
+    {"High_kV":  46, "Low_kV":  0.5,"MVA":   3,  "Copper_W":  12000, "Core_W":   5800},
 
-    # 33 kV high side
-    {"High_kV":  33, "Low_kV":  13, "MVA":  20,   "Copper_W":   7000, "Core_W":   3000},
-    {"High_kV":  33, "Low_kV":   8, "MVA":  10.5, "Copper_W":   5000, "Core_W":   2000},
+    {"High_kV":  33, "Low_kV":  13, "MVA":  20,  "Copper_W":   7000, "Core_W":   3000},
+    {"High_kV":  33, "Low_kV":   8, "MVA":  10.5,"Copper_W":   5000, "Core_W":   2000},
 ]
 
 LEGEND = pd.DataFrame(LEGEND_ROWS).copy()
 LEGEND["High_kV"] = LEGEND["High_kV"].astype(float).round(6)
-LEGEND["Low_kV"]  = LEGEND["Low_kV"].astype(float).round(6)
-LEGEND["MVA"]     = LEGEND["MVA"].astype(float).round(6)
+LEGEND["Low_kV"] = LEGEND["Low_kV"].astype(float).round(6)
+LEGEND["MVA"] = LEGEND["MVA"].astype(float).round(6)
 
-# -----------------------------
-# Column name aliases (your sheet has "Lim MVA A" sometimes)
-# -----------------------------
 DATA_COL_ALIASES = {
     "From Nom kV": ["From Nom kV", "FromNomkV", "From kV", "From KV", "From Nom KV"],
-    "To Nom kV":   ["To Nom kV", "ToNomkV", "To kV", "To KV", "To Nom KV"],
-    "Lim MVA":     ["Lim MVA", "Lim MVA A", "Limit MVA", "MVA", "Size MVA", "Rating MVA"],
+    "To Nom kV": ["To Nom kV", "ToNomkV", "To kV", "To KV", "To Nom KV"],
+    "Lim MVA": ["Lim MVA", "Lim MVA A", "Limit MVA", "MVA", "Size MVA", "Rating MVA"],
 }
+
 
 def _normalize_cols(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [str(c).strip() for c in df.columns]
     return df
+
 
 def _pick_col(df: pd.DataFrame, wanted: str, aliases: dict) -> str:
     cols = set(df.columns)
@@ -68,21 +60,28 @@ def _pick_col(df: pd.DataFrame, wanted: str, aliases: dict) -> str:
             return lower_map[cand.lower()]
     raise KeyError(f"Could not find required column '{wanted}'. Tried: {aliases.get(wanted, [wanted])}")
 
+
 def _to_num(s: pd.Series) -> pd.Series:
     return pd.to_numeric(s, errors="coerce")
 
+
+def fmt_kv(x) -> str:
+    if pd.isna(x):
+        return ""
+    x = float(x)
+    if abs(x - round(x)) < 1e-9:
+        return str(int(round(x)))
+    return str(x).rstrip("0").rstrip(".")
+
+
 def read_sheet_with_auto_header(xlsx_path: str, sheet_name: str, scan_rows: int = 200) -> pd.DataFrame:
-    """
-    Your workbook has rows above the actual table header.
-    This scans the first `scan_rows` rows to find the row that contains
-    From Nom kV / To Nom kV / Lim MVA (or Lim MVA A), then reads with that header.
-    """
     preview = pd.read_excel(xlsx_path, sheet_name=sheet_name, header=None, nrows=scan_rows, dtype=str)
-    preview = preview.fillna("").astype(str).applymap(lambda x: x.strip())
+    preview = preview.fillna("").astype(str)
+    preview = preview.apply(lambda col: col.str.strip())
 
     req_from = set(a.lower() for a in DATA_COL_ALIASES["From Nom kV"])
-    req_to   = set(a.lower() for a in DATA_COL_ALIASES["To Nom kV"])
-    req_mva  = set(a.lower() for a in DATA_COL_ALIASES["Lim MVA"])
+    req_to = set(a.lower() for a in DATA_COL_ALIASES["To Nom kV"])
+    req_mva = set(a.lower() for a in DATA_COL_ALIASES["Lim MVA"])
 
     header_row = None
     for r in range(len(preview)):
@@ -92,34 +91,28 @@ def read_sheet_with_auto_header(xlsx_path: str, sheet_name: str, scan_rows: int 
             break
 
     if header_row is None:
-        raise ValueError(
-            "Could not auto-detect header row.\n"
-            "I scanned the first rows but did not see From Nom kV / To Nom kV / Lim MVA.\n"
-            "If your headers are different, tell me the exact text."
-        )
+        raise ValueError("Could not auto-detect header row.")
 
     df = pd.read_excel(xlsx_path, sheet_name=sheet_name, header=header_row)
-    df = _normalize_cols(df)
-
-    # Drop unnamed columns that come from formatting
-    df = df.loc[:, ~df.columns.astype(str).str.match(r"^Unnamed", case=False)]
+    df = df.loc[:, ~df.columns.astype(str).str.match(r"^Unnamed")]
     return df
+
 
 def annotate_data(data_df: pd.DataFrame, allow_nearest_mva: bool, mva_tol: float) -> pd.DataFrame:
     df = _normalize_cols(data_df)
 
     c_from = _pick_col(df, "From Nom kV", DATA_COL_ALIASES)
-    c_to   = _pick_col(df, "To Nom kV",   DATA_COL_ALIASES)
-    c_mva  = _pick_col(df, "Lim MVA",     DATA_COL_ALIASES)
+    c_to = _pick_col(df, "To Nom kV", DATA_COL_ALIASES)
+    c_mva = _pick_col(df, "Lim MVA", DATA_COL_ALIASES)
 
     out = df.copy()
     out["_From_kV"] = _to_num(out[c_from])
-    out["_To_kV"]   = _to_num(out[c_to])
-    out["_MVA"]     = _to_num(out[c_mva])
+    out["_To_kV"] = _to_num(out[c_to])
+    out["_MVA"] = _to_num(out[c_mva])
 
     out["High_kV"] = out[["_From_kV", "_To_kV"]].max(axis=1).round(6)
-    out["Low_kV"]  = out[["_From_kV", "_To_kV"]].min(axis=1).round(6)
-    out["MVA"]     = out["_MVA"].round(6)
+    out["Low_kV"] = out[["_From_kV", "_To_kV"]].min(axis=1).round(6)
+    out["MVA"] = out["_MVA"].round(6)
 
     merged = out.merge(
         LEGEND,
@@ -172,13 +165,15 @@ def annotate_data(data_df: pd.DataFrame, allow_nearest_mva: bool, mva_tol: float
             merged["Legend_MVA_Used"] = used_mva
 
     merged["Total_W"] = merged[["Copper_W", "Core_W"]].sum(axis=1, min_count=1)
-    merged["Pair"] = merged["High_kV"].astype("Int64").astype(str) + "-" + merged["Low_kV"].astype("Int64").astype(str)
+    merged["Pair"] = merged["High_kV"].apply(fmt_kv) + "-" + merged["Low_kV"].apply(fmt_kv)
 
     merged.drop(columns=[c for c in ["_From_kV", "_To_kV", "_MVA"] if c in merged.columns], inplace=True)
     return merged
 
+
 def summarize_pairs(annotated: pd.DataFrame) -> pd.DataFrame:
     df = annotated.copy()
+
     summary = (
         df.groupby(["High_kV", "Low_kV", "Pair"], dropna=False)
           .agg(
@@ -194,6 +189,7 @@ def summarize_pairs(annotated: pd.DataFrame) -> pd.DataFrame:
     )
     return summary
 
+
 def run_process(input_path: str, sheet_name: str, output_path: str,
                 allow_nearest_mva: bool, mva_tol: float) -> None:
     data_df = read_sheet_with_auto_header(input_path, sheet_name)
@@ -204,16 +200,16 @@ def run_process(input_path: str, sheet_name: str, output_path: str,
         annotated.to_excel(w, sheet_name="Annotated", index=False)
         summary.to_excel(w, sheet_name="Summary", index=False)
 
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("XFMR Loss Summarizer (Hardcoded Legend)")
-        self.geometry("860x440")
+        self.title("XFMR Loss Summarizer")
+        self.geometry("820x420")
 
         self.in_path = tk.StringVar()
         self.out_path = tk.StringVar()
         self.sheet_name = tk.StringVar()
-
         self.allow_nearest = tk.BooleanVar(value=True)
         self.mva_tol = tk.StringVar(value="0.0")
 
@@ -223,15 +219,15 @@ class App(tk.Tk):
         frm.pack(fill="both", expand=True, padx=12, pady=12)
 
         ttk.Label(frm, text="Input .xlsx").grid(row=0, column=0, sticky="w", **pad)
-        ttk.Entry(frm, textvariable=self.in_path, width=78).grid(row=0, column=1, sticky="we", **pad)
+        ttk.Entry(frm, textvariable=self.in_path, width=75).grid(row=0, column=1, sticky="we", **pad)
         ttk.Button(frm, text="Browse", command=self.pick_input).grid(row=0, column=2, **pad)
 
         ttk.Label(frm, text="Sheet to process").grid(row=1, column=0, sticky="w", **pad)
-        self.sheet_combo = ttk.Combobox(frm, textvariable=self.sheet_name, width=52, state="readonly", values=[])
+        self.sheet_combo = ttk.Combobox(frm, textvariable=self.sheet_name, width=45, state="readonly", values=[])
         self.sheet_combo.grid(row=1, column=1, sticky="w", **pad)
 
         ttk.Label(frm, text="Output .xlsx").grid(row=2, column=0, sticky="w", **pad)
-        ttk.Entry(frm, textvariable=self.out_path, width=78).grid(row=2, column=1, sticky="we", **pad)
+        ttk.Entry(frm, textvariable=self.out_path, width=75).grid(row=2, column=1, sticky="we", **pad)
         ttk.Button(frm, text="Browse", command=self.pick_output).grid(row=2, column=2, **pad)
 
         ttk.Checkbutton(frm, text="Allow nearest-MVA fallback (within tolerance)",
@@ -241,25 +237,13 @@ class App(tk.Tk):
         tol_row.grid(row=4, column=1, sticky="w", **pad)
         ttk.Label(tol_row, text="MVA tolerance:").pack(side="left")
         ttk.Entry(tol_row, textvariable=self.mva_tol, width=10).pack(side="left", padx=8)
-        ttk.Label(tol_row, text="(0 = exact only; try 1, 5, etc)").pack(side="left")
+        ttk.Label(tol_row, text="(0 = exact only)").pack(side="left")
 
         ttk.Separator(frm).grid(row=5, column=0, columnspan=3, sticky="we", pady=10)
 
         ttk.Button(frm, text="Run", command=self.run).grid(row=6, column=1, sticky="e", padx=10, pady=10)
 
         frm.columnconfigure(1, weight=1)
-
-        note = (
-            "This auto-detects the header row (because your sheet has rows above the table).\n"
-            "Required columns must exist somewhere in the header row:\n"
-            "  • From Nom kV\n"
-            "  • To Nom kV\n"
-            "  • Lim MVA (or Lim MVA A)\n\n"
-            "Output:\n"
-            "  • Annotated: adds High/Low kV + Copper/Core/Total + Match_Status\n"
-            "  • Summary: sums grouped by High-Low pair (230-115, 230-46, ...)\n"
-        )
-        ttk.Label(frm, text=note, justify="left").grid(row=7, column=0, columnspan=3, sticky="w", padx=10, pady=8)
 
     def pick_input(self):
         path = filedialog.askopenfilename(
@@ -271,7 +255,6 @@ class App(tk.Tk):
 
         self.in_path.set(path)
 
-        # Populate sheet dropdown
         try:
             xl = pd.ExcelFile(path)
             sheets = xl.sheet_names
@@ -281,7 +264,6 @@ class App(tk.Tk):
 
         self.sheet_combo["values"] = sheets
         if sheets:
-            # Guess a likely sheet
             guess = None
             for s in sheets:
                 if "xfmr" in s.lower() or "xfmrs" in s.lower():
@@ -331,6 +313,7 @@ class App(tk.Tk):
             return
 
         messagebox.showinfo("Done", f"Saved:\n{out_path}")
+
 
 if __name__ == "__main__":
     App().mainloop()
