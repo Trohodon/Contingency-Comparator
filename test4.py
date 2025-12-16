@@ -31,13 +31,14 @@ LEGEND_ROWS = [
 ]
 
 LEGEND = pd.DataFrame(LEGEND_ROWS).copy()
-LEGEND["High_kV"] = LEGEND["High_kV"].astype(float).round(6)
-LEGEND["Low_kV"]  = LEGEND["Low_kV"].astype(float).round(6)
-LEGEND["MVA"]     = LEGEND["MVA"].astype(float).round(6)
+LEGEND["High_kV"] = pd.to_numeric(LEGEND["High_kV"], errors="coerce").astype(float).round(6)
+LEGEND["Low_kV"]  = pd.to_numeric(LEGEND["Low_kV"], errors="coerce").astype(float).round(6)
+LEGEND["MVA"]     = pd.to_numeric(LEGEND["MVA"], errors="coerce").astype(float).round(6)
+LEGEND["Core_W"]  = pd.to_numeric(LEGEND["Core_W"], errors="coerce")
 
 DATA_COL_ALIASES = {
-    "From":   ["From", "From kV", "From KV"],
-    "To":     ["To", "To kV", "To KV"],
+    "From": ["From", "FROM", "From kV", "From KV"],
+    "To": ["To", "TO", "To kV", "To KV"],
     "Lim MVA": ["Lim MVA", "Lim MVA A", "Limit MVA", "MVA", "Size MVA", "Rating MVA"],
 }
 
@@ -47,11 +48,11 @@ def _normalize_cols(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 def _pick_col(df: pd.DataFrame, wanted: str) -> str:
-    cols = set(df.columns)
+    cols = list(df.columns)
     for cand in DATA_COL_ALIASES.get(wanted, [wanted]):
         if cand in cols:
             return cand
-    lower_map = {c.lower(): c for c in df.columns}
+    lower_map = {c.lower(): c for c in cols}
     for cand in DATA_COL_ALIASES.get(wanted, [wanted]):
         if cand.lower() in lower_map:
             return lower_map[cand.lower()]
@@ -70,8 +71,7 @@ def fmt_kv(x) -> str:
 
 def read_sheet_with_auto_header(xlsx_path: str, sheet_name: str, scan_rows: int = 200) -> pd.DataFrame:
     preview = pd.read_excel(xlsx_path, sheet_name=sheet_name, header=None, nrows=scan_rows, dtype=str)
-    preview = preview.fillna("").astype(str)
-    preview = preview.apply(lambda col: col.str.strip())
+    preview = preview.fillna("").astype(str).apply(lambda col: col.str.strip())
 
     req_from = set(a.lower() for a in DATA_COL_ALIASES["From"])
     req_to   = set(a.lower() for a in DATA_COL_ALIASES["To"])
@@ -85,28 +85,28 @@ def read_sheet_with_auto_header(xlsx_path: str, sheet_name: str, scan_rows: int 
             break
 
     if header_row is None:
-        raise ValueError("Could not auto-detect header row.")
+        raise ValueError("Could not auto-detect header row (missing From/To/Lim MVA).")
 
     df = pd.read_excel(xlsx_path, sheet_name=sheet_name, header=header_row)
     df = df.loc[:, ~df.columns.astype(str).str.match(r"^Unnamed")]
     return df
 
-def add_core_loss(df: pd.DataFrame, allow_nearest_mva: bool, mva_tol: float) -> pd.DataFrame:
+def match_core_losses(df: pd.DataFrame, allow_nearest_mva: bool, mva_tol: float) -> pd.DataFrame:
     df = _normalize_cols(df)
-
     c_from = _pick_col(df, "From")
     c_to   = _pick_col(df, "To")
     c_mva  = _pick_col(df, "Lim MVA")
 
     out = df.copy()
-    out["From_kV"] = _to_num(out[c_from]).round(6)
-    out["To_kV"]   = _to_num(out[c_to]).round(6)
-    out["MVA"]     = _to_num(out[c_mva]).round(6)
+    out["From_kV"] = _to_num(out[c_from]).astype(float).round(6)
+    out["To_kV"]   = _to_num(out[c_to]).astype(float).round(6)
+    out["MVA"]     = _to_num(out[c_mva]).astype(float).round(6)
 
     out["High_kV"] = out[["From_kV", "To_kV"]].max(axis=1).round(6)
     out["Low_kV"]  = out[["From_kV", "To_kV"]].min(axis=1).round(6)
 
     merged = out.merge(LEGEND, how="left", on=["High_kV", "Low_kV", "MVA"])
+    merged["Legend_MVA_Used"] = np.where(merged["Core_W"].notna(), merged["MVA"], np.nan)
     merged["Match_Status"] = np.where(merged["Core_W"].notna(), "OK", "NO EXACT MATCH")
 
     if allow_nearest_mva:
@@ -114,8 +114,6 @@ def add_core_loss(df: pd.DataFrame, allow_nearest_mva: bool, mva_tol: float) -> 
         if need.any():
             legend_groups = {k: g.sort_values("MVA").reset_index(drop=True)
                              for k, g in LEGEND.groupby(["High_kV", "Low_kV"])}
-
-            used_mva = pd.Series([np.nan] * len(merged), index=merged.index)
 
             for i in merged.index[need]:
                 hk = merged.at[i, "High_kV"]
@@ -134,36 +132,54 @@ def add_core_loss(df: pd.DataFrame, allow_nearest_mva: bool, mva_tol: float) -> 
 
                 if diff_val <= mva_tol:
                     merged.at[i, "Core_W"] = best["Core_W"]
-                    used_mva.at[i] = best["MVA"]
+                    merged.at[i, "Legend_MVA_Used"] = best["MVA"]
                     merged.at[i, "Match_Status"] = "NEAREST"
                 else:
                     merged.at[i, "Match_Status"] = "NO MATCH"
 
-            merged["Legend_MVA_Used"] = used_mva
-
     merged["HighToLow"] = merged["High_kV"].apply(fmt_kv) + "-" + merged["Low_kV"].apply(fmt_kv)
     return merged
 
-def build_summary(merged: pd.DataFrame) -> pd.DataFrame:
-    summary = (
-        merged.groupby(["High_kV", "Low_kV", "HighToLow"], dropna=False)
-              .agg(
-                  Count=("HighToLow", "size"),
-                  Core_W_Sum=("Core_W", "sum"),
-              )
-              .reset_index()
-              .sort_values(["High_kV", "Low_kV"], ascending=[False, False])
+def build_breakdown_and_summary(merged: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    matched = merged[merged["Core_W"].notna()].copy()
+    unmatched = merged[merged["Core_W"].isna()].copy()
+
+    breakdown = (
+        matched.groupby(["High_kV", "Low_kV", "HighToLow", "Core_W"], dropna=False)
+               .size()
+               .reset_index(name="Count")
     )
-    return summary
+    breakdown["Bucket_Total_Core_W"] = breakdown["Count"] * breakdown["Core_W"]
+    breakdown = breakdown.sort_values(["High_kV", "Low_kV", "Core_W"], ascending=[False, False, False])
+
+    summary = (
+        breakdown.groupby(["High_kV", "Low_kV", "HighToLow"], dropna=False)
+                 .agg(
+                     Total_Count=("Count", "sum"),
+                     Core_W_Sum=("Bucket_Total_Core_W", "sum"),
+                 )
+                 .reset_index()
+                 .sort_values(["High_kV", "Low_kV"], ascending=[False, False])
+    )
+
+    if not unmatched.empty:
+        unmatched_view = unmatched[["From_kV", "To_kV", "MVA", "High_kV", "Low_kV", "HighToLow", "Match_Status"]].copy()
+        unmatched_view = unmatched_view.sort_values(["High_kV", "Low_kV"], ascending=[False, False])
+    else:
+        unmatched_view = pd.DataFrame(columns=["From_kV", "To_kV", "MVA", "High_kV", "Low_kV", "HighToLow", "Match_Status"])
+
+    return breakdown, summary, unmatched_view
 
 def run_process(input_path: str, sheet_name: str, output_path: str,
                 allow_nearest_mva: bool, mva_tol: float) -> None:
     data_df = read_sheet_with_auto_header(input_path, sheet_name)
-    merged = add_core_loss(data_df, allow_nearest_mva, mva_tol)
-    summary = build_summary(merged)
+    merged = match_core_losses(data_df, allow_nearest_mva, mva_tol)
+    breakdown, summary, unmatched = build_breakdown_and_summary(merged)
 
     with pd.ExcelWriter(output_path, engine="openpyxl") as w:
-        summary.to_excel(w, sheet_name="CoreLoss_Summary", index=False)
+        summary.to_excel(w, sheet_name="Summary", index=False)
+        breakdown.to_excel(w, sheet_name="Breakdown", index=False)
+        unmatched.to_excel(w, sheet_name="Unmatched", index=False)
 
 class App(tk.Tk):
     def __init__(self):
