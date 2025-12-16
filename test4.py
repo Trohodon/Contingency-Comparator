@@ -3,67 +3,62 @@ from tkinter import ttk, filedialog, messagebox
 import pandas as pd
 import numpy as np
 
-
 LEGEND_ROWS = [
-    {"High_kV": 230, "Low_kV": 115, "MVA": 336,  "Copper_W": 150000, "Core_W": 100000},
-    {"High_kV": 230, "Low_kV": 115, "MVA": 224,  "Copper_W": 120000, "Core_W":  80000},
-    {"High_kV": 230, "Low_kV":  46, "MVA":  28,  "Copper_W":  80000, "Core_W":  40000},
-    {"High_kV": 230, "Low_kV":  33, "MVA":  93.3,"Copper_W":  47000, "Core_W":  11500},
-    {"High_kV": 230, "Low_kV":  23, "MVA":  37.3,"Copper_W":  66500, "Core_W":  23000},
-    {"High_kV": 230, "Low_kV":  13, "MVA":  56,  "Copper_W":  57000, "Core_W":  29000},
+    {"High_kV": 230, "Low_kV": 115, "MVA": 336,  "Core_W": 100000},
+    {"High_kV": 230, "Low_kV": 115, "MVA": 224,  "Core_W":  80000},
+    {"High_kV": 230, "Low_kV":  46, "MVA":  28,  "Core_W":  40000},
+    {"High_kV": 230, "Low_kV":  33, "MVA":  93.3,"Core_W":  11500},
+    {"High_kV": 230, "Low_kV":  23, "MVA":  37.3,"Core_W":  23000},
+    {"High_kV": 230, "Low_kV":  13, "MVA":  56,  "Core_W":  29000},
 
-    {"High_kV": 115, "Low_kV":  46, "MVA":  28,  "Copper_W":  50000, "Core_W":  12000},
-    {"High_kV": 115, "Low_kV":  33, "MVA":  50,  "Copper_W":  50000, "Core_W":  19000},
-    {"High_kV": 115, "Low_kV":  23, "MVA":  37.3,"Copper_W":  55000, "Core_W":  18000},
-    {"High_kV": 115, "Low_kV":  23, "MVA":  28,  "Copper_W":  45000, "Core_W":  15000},
-    {"High_kV": 115, "Low_kV":  23, "MVA":  22.4,"Copper_W":  40000, "Core_W":  14000},
-    {"High_kV": 115, "Low_kV":  23, "MVA":  10.5,"Copper_W":  30000, "Core_W":  11000},
-    {"High_kV": 115, "Low_kV":  13, "MVA":  22.4,"Copper_W":  42000, "Core_W":  11000},
-    {"High_kV": 115, "Low_kV":   8, "MVA":  22.4,"Copper_W":  40000, "Core_W":  11000},
-    {"High_kV": 115, "Low_kV":   4, "MVA":  22.4,"Copper_W":  40000, "Core_W":  11000},
+    {"High_kV": 115, "Low_kV":  46, "MVA":  28,  "Core_W":  12000},
+    {"High_kV": 115, "Low_kV":  33, "MVA":  50,  "Core_W":  19000},
+    {"High_kV": 115, "Low_kV":  23, "MVA":  37.3,"Core_W":  18000},
+    {"High_kV": 115, "Low_kV":  23, "MVA":  28,  "Core_W":  15000},
+    {"High_kV": 115, "Low_kV":  23, "MVA":  22.4,"Core_W":  14000},
+    {"High_kV": 115, "Low_kV":  23, "MVA":  10.5,"Core_W":  11000},
+    {"High_kV": 115, "Low_kV":  13, "MVA":  22.4,"Core_W":  11000},
+    {"High_kV": 115, "Low_kV":   8, "MVA":  22.4,"Core_W":  11000},
+    {"High_kV": 115, "Low_kV":   4, "MVA":  22.4,"Core_W":  11000},
 
-    {"High_kV":  46, "Low_kV":  23, "MVA":  10.5,"Copper_W":  35000, "Core_W":  10000},
-    {"High_kV":  46, "Low_kV":  13, "MVA":  10.5,"Copper_W":  33000, "Core_W":   7000},
-    {"High_kV":  46, "Low_kV":   8, "MVA":  10.5,"Copper_W":  25000, "Core_W":   6000},
-    {"High_kV":  46, "Low_kV":  0.5,"MVA":   3,  "Copper_W":  12000, "Core_W":   5800},
+    {"High_kV":  46, "Low_kV":  23, "MVA":  10.5,"Core_W":  10000},
+    {"High_kV":  46, "Low_kV":  13, "MVA":  10.5,"Core_W":   7000},
+    {"High_kV":  46, "Low_kV":   8, "MVA":  10.5,"Core_W":   6000},
+    {"High_kV":  46, "Low_kV":  0.5,"MVA":   3,  "Core_W":   5800},
 
-    {"High_kV":  33, "Low_kV":  13, "MVA":  20,  "Copper_W":   7000, "Core_W":   3000},
-    {"High_kV":  33, "Low_kV":   8, "MVA":  10.5,"Copper_W":   5000, "Core_W":   2000},
+    {"High_kV":  33, "Low_kV":  13, "MVA":  20,  "Core_W":   3000},
+    {"High_kV":  33, "Low_kV":   8, "MVA":  10.5,"Core_W":   2000},
 ]
 
 LEGEND = pd.DataFrame(LEGEND_ROWS).copy()
 LEGEND["High_kV"] = LEGEND["High_kV"].astype(float).round(6)
-LEGEND["Low_kV"] = LEGEND["Low_kV"].astype(float).round(6)
-LEGEND["MVA"] = LEGEND["MVA"].astype(float).round(6)
+LEGEND["Low_kV"]  = LEGEND["Low_kV"].astype(float).round(6)
+LEGEND["MVA"]     = LEGEND["MVA"].astype(float).round(6)
 
 DATA_COL_ALIASES = {
     "From Nom kV": ["From Nom kV", "FromNomkV", "From kV", "From KV", "From Nom KV"],
-    "To Nom kV": ["To Nom kV", "ToNomkV", "To kV", "To KV", "To Nom KV"],
-    "Lim MVA": ["Lim MVA", "Lim MVA A", "Limit MVA", "MVA", "Size MVA", "Rating MVA"],
+    "To Nom kV":   ["To Nom kV", "ToNomkV", "To kV", "To KV", "To Nom KV"],
+    "Lim MVA":     ["Lim MVA", "Lim MVA A", "Limit MVA", "MVA", "Size MVA", "Rating MVA"],
 }
-
 
 def _normalize_cols(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [str(c).strip() for c in df.columns]
     return df
 
-
-def _pick_col(df: pd.DataFrame, wanted: str, aliases: dict) -> str:
+def _pick_col(df: pd.DataFrame, wanted: str) -> str:
     cols = set(df.columns)
-    for cand in aliases.get(wanted, [wanted]):
+    for cand in DATA_COL_ALIASES.get(wanted, [wanted]):
         if cand in cols:
             return cand
     lower_map = {c.lower(): c for c in df.columns}
-    for cand in aliases.get(wanted, [wanted]):
+    for cand in DATA_COL_ALIASES.get(wanted, [wanted]):
         if cand.lower() in lower_map:
             return lower_map[cand.lower()]
-    raise KeyError(f"Could not find required column '{wanted}'. Tried: {aliases.get(wanted, [wanted])}")
-
+    raise KeyError(f"Could not find required column '{wanted}'")
 
 def _to_num(s: pd.Series) -> pd.Series:
     return pd.to_numeric(s, errors="coerce")
-
 
 def fmt_kv(x) -> str:
     if pd.isna(x):
@@ -73,15 +68,14 @@ def fmt_kv(x) -> str:
         return str(int(round(x)))
     return str(x).rstrip("0").rstrip(".")
 
-
 def read_sheet_with_auto_header(xlsx_path: str, sheet_name: str, scan_rows: int = 200) -> pd.DataFrame:
     preview = pd.read_excel(xlsx_path, sheet_name=sheet_name, header=None, nrows=scan_rows, dtype=str)
     preview = preview.fillna("").astype(str)
     preview = preview.apply(lambda col: col.str.strip())
 
     req_from = set(a.lower() for a in DATA_COL_ALIASES["From Nom kV"])
-    req_to = set(a.lower() for a in DATA_COL_ALIASES["To Nom kV"])
-    req_mva = set(a.lower() for a in DATA_COL_ALIASES["Lim MVA"])
+    req_to   = set(a.lower() for a in DATA_COL_ALIASES["To Nom kV"])
+    req_mva  = set(a.lower() for a in DATA_COL_ALIASES["Lim MVA"])
 
     header_row = None
     for r in range(len(preview)):
@@ -97,38 +91,28 @@ def read_sheet_with_auto_header(xlsx_path: str, sheet_name: str, scan_rows: int 
     df = df.loc[:, ~df.columns.astype(str).str.match(r"^Unnamed")]
     return df
 
+def add_core_loss(df: pd.DataFrame, allow_nearest_mva: bool, mva_tol: float) -> pd.DataFrame:
+    df = _normalize_cols(df)
 
-def annotate_data(data_df: pd.DataFrame, allow_nearest_mva: bool, mva_tol: float) -> pd.DataFrame:
-    df = _normalize_cols(data_df)
-
-    c_from = _pick_col(df, "From Nom kV", DATA_COL_ALIASES)
-    c_to = _pick_col(df, "To Nom kV", DATA_COL_ALIASES)
-    c_mva = _pick_col(df, "Lim MVA", DATA_COL_ALIASES)
+    c_from = _pick_col(df, "From Nom kV")
+    c_to   = _pick_col(df, "To Nom kV")
+    c_mva  = _pick_col(df, "Lim MVA")
 
     out = df.copy()
-    out["_From_kV"] = _to_num(out[c_from])
-    out["_To_kV"] = _to_num(out[c_to])
-    out["_MVA"] = _to_num(out[c_mva])
+    out["From_kV"] = _to_num(out[c_from]).round(6)
+    out["To_kV"]   = _to_num(out[c_to]).round(6)
+    out["MVA"]     = _to_num(out[c_mva]).round(6)
 
-    out["High_kV"] = out[["_From_kV", "_To_kV"]].max(axis=1).round(6)
-    out["Low_kV"] = out[["_From_kV", "_To_kV"]].min(axis=1).round(6)
-    out["MVA"] = out["_MVA"].round(6)
+    out["High_kV"] = out[["From_kV", "To_kV"]].max(axis=1).round(6)
+    out["Low_kV"]  = out[["From_kV", "To_kV"]].min(axis=1).round(6)
+    out["Same_kV"] = (out["From_kV"] == out["To_kV"])
 
-    merged = out.merge(
-        LEGEND,
-        how="left",
-        on=["High_kV", "Low_kV", "MVA"],
-        suffixes=("", "_legend"),
-    )
+    merged = out.merge(LEGEND, how="left", on=["High_kV", "Low_kV", "MVA"])
 
-    merged["Match_Status"] = np.where(
-        merged["Copper_W"].notna() & merged["Core_W"].notna(),
-        "OK",
-        "NO EXACT MATCH"
-    )
+    merged["Match_Status"] = np.where(merged["Core_W"].notna(), "OK", "NO EXACT MATCH")
 
     if allow_nearest_mva:
-        need = merged["Match_Status"] != "OK"
+        need = merged["Core_W"].isna() & merged["High_kV"].notna() & merged["Low_kV"].notna() & merged["MVA"].notna()
         if need.any():
             legend_groups = {k: g.sort_values("MVA").reset_index(drop=True)
                              for k, g in LEGEND.groupby(["High_kV", "Low_kV"])}
@@ -139,11 +123,6 @@ def annotate_data(data_df: pd.DataFrame, allow_nearest_mva: bool, mva_tol: float
                 hk = merged.at[i, "High_kV"]
                 lk = merged.at[i, "Low_kV"]
                 mva = merged.at[i, "MVA"]
-
-                if pd.isna(hk) or pd.isna(lk) or pd.isna(mva):
-                    merged.at[i, "Match_Status"] = "MISSING kV/MVA"
-                    continue
-
                 g = legend_groups.get((hk, lk))
                 if g is None or g.empty:
                     merged.at[i, "Match_Status"] = "NO LEGEND FOR kV PAIR"
@@ -155,7 +134,6 @@ def annotate_data(data_df: pd.DataFrame, allow_nearest_mva: bool, mva_tol: float
                 diff_val = float(diffs.loc[j])
 
                 if diff_val <= mva_tol:
-                    merged.at[i, "Copper_W"] = best["Copper_W"]
                     merged.at[i, "Core_W"] = best["Core_W"]
                     used_mva.at[i] = best["MVA"]
                     merged.at[i, "Match_Status"] = f"NEAREST MVA ({best['MVA']})"
@@ -164,48 +142,48 @@ def annotate_data(data_df: pd.DataFrame, allow_nearest_mva: bool, mva_tol: float
 
             merged["Legend_MVA_Used"] = used_mva
 
-    merged["Total_W"] = merged[["Copper_W", "Core_W"]].sum(axis=1, min_count=1)
     merged["Pair"] = merged["High_kV"].apply(fmt_kv) + "-" + merged["Low_kV"].apply(fmt_kv)
-
-    merged.drop(columns=[c for c in ["_From_kV", "_To_kV", "_MVA"] if c in merged.columns], inplace=True)
     return merged
 
-
-def summarize_pairs(annotated: pd.DataFrame) -> pd.DataFrame:
-    df = annotated.copy()
-
-    summary = (
-        df.groupby(["High_kV", "Low_kV", "Pair"], dropna=False)
-          .agg(
-              Count=("Pair", "size"),
-              Copper_W_Sum=("Copper_W", "sum"),
-              Core_W_Sum=("Core_W", "sum"),
-              Total_W_Sum=("Total_W", "sum"),
-              OK_Matches=("Match_Status", lambda s: int((s == "OK").sum())),
-              NonExact=("Match_Status", lambda s: int((s != "OK").sum())),
-          )
-          .reset_index()
-          .sort_values(["High_kV", "Low_kV"])
+def build_summary(merged: pd.DataFrame) -> (pd.DataFrame, pd.DataFrame):
+    pair_summary = (
+        merged.groupby(["High_kV", "Low_kV", "Pair"], dropna=False)
+              .agg(
+                  Count=("Pair", "size"),
+                  Core_W_Sum=("Core_W", "sum"),
+                  OK=("Match_Status", lambda s: int((s == "OK").sum())),
+                  NonOK=("Match_Status", lambda s: int((s != "OK").sum())),
+              )
+              .reset_index()
+              .sort_values(["High_kV", "Low_kV"])
     )
-    return summary
 
+    same_kv_rows = merged[merged["Same_kV"]].copy()
+    same_kv_summary = (
+        same_kv_rows.groupby(["From_kV"], dropna=False)
+                    .agg(Count=("From_kV", "size"), Core_W_Sum=("Core_W", "sum"))
+                    .reset_index()
+                    .rename(columns={"From_kV": "kV"})
+                    .sort_values(["kV"])
+    )
+
+    return pair_summary, same_kv_summary
 
 def run_process(input_path: str, sheet_name: str, output_path: str,
                 allow_nearest_mva: bool, mva_tol: float) -> None:
     data_df = read_sheet_with_auto_header(input_path, sheet_name)
-    annotated = annotate_data(data_df, allow_nearest_mva, mva_tol)
-    summary = summarize_pairs(annotated)
+    merged = add_core_loss(data_df, allow_nearest_mva, mva_tol)
+    pair_summary, same_kv_summary = build_summary(merged)
 
     with pd.ExcelWriter(output_path, engine="openpyxl") as w:
-        annotated.to_excel(w, sheet_name="Annotated", index=False)
-        summary.to_excel(w, sheet_name="Summary", index=False)
-
+        pair_summary.to_excel(w, sheet_name="CoreLoss_Summary", index=False)
+        same_kv_summary.to_excel(w, sheet_name="SameKV_CoreLoss", index=False)
 
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("XFMR Loss Summarizer")
-        self.geometry("820x420")
+        self.title("Core Loss Summarizer")
+        self.geometry("820x360")
 
         self.in_path = tk.StringVar()
         self.out_path = tk.StringVar()
@@ -214,7 +192,6 @@ class App(tk.Tk):
         self.mva_tol = tk.StringVar(value="0.0")
 
         pad = {"padx": 10, "pady": 6}
-
         frm = ttk.Frame(self)
         frm.pack(fill="both", expand=True, padx=12, pady=12)
 
@@ -230,17 +207,15 @@ class App(tk.Tk):
         ttk.Entry(frm, textvariable=self.out_path, width=75).grid(row=2, column=1, sticky="we", **pad)
         ttk.Button(frm, text="Browse", command=self.pick_output).grid(row=2, column=2, **pad)
 
-        ttk.Checkbutton(frm, text="Allow nearest-MVA fallback (within tolerance)",
-                        variable=self.allow_nearest).grid(row=3, column=1, sticky="w", **pad)
+        ttk.Checkbutton(frm, text="Allow nearest-MVA lookup (within tolerance)", variable=self.allow_nearest)\
+            .grid(row=3, column=1, sticky="w", **pad)
 
         tol_row = ttk.Frame(frm)
         tol_row.grid(row=4, column=1, sticky="w", **pad)
         ttk.Label(tol_row, text="MVA tolerance:").pack(side="left")
         ttk.Entry(tol_row, textvariable=self.mva_tol, width=10).pack(side="left", padx=8)
-        ttk.Label(tol_row, text="(0 = exact only)").pack(side="left")
 
         ttk.Separator(frm).grid(row=5, column=0, columnspan=3, sticky="we", pady=10)
-
         ttk.Button(frm, text="Run", command=self.run).grid(row=6, column=1, sticky="e", padx=10, pady=10)
 
         frm.columnconfigure(1, weight=1)
@@ -254,7 +229,6 @@ class App(tk.Tk):
             return
 
         self.in_path.set(path)
-
         try:
             xl = pd.ExcelFile(path)
             sheets = xl.sheet_names
@@ -262,7 +236,7 @@ class App(tk.Tk):
             messagebox.showerror("Error", f"Failed to read workbook sheets:\n{e}")
             return
 
-        self.sheet_combo["values"] = sheets
+        self.sheet_combo["values"] = reminder = sheets
         if sheets:
             guess = None
             for s in sheets:
@@ -272,7 +246,7 @@ class App(tk.Tk):
             self.sheet_name.set(guess if guess else sheets[0])
 
         if not self.out_path.get():
-            self.out_path.set(path.replace(".xlsx", "_xfmr_loss_summary.xlsx"))
+            self.out_path.set(path.replace(".xlsx", "_coreloss_summary.xlsx"))
 
     def pick_output(self):
         path = filedialog.asksaveasfilename(
@@ -301,7 +275,7 @@ class App(tk.Tk):
         try:
             tol = float(self.mva_tol.get().strip())
             if tol < 0:
-                raise ValueError("MVA tolerance must be >= 0")
+                raise ValueError()
         except Exception:
             messagebox.showerror("Invalid tolerance", "MVA tolerance must be a number (>= 0).")
             return
@@ -313,7 +287,6 @@ class App(tk.Tk):
             return
 
         messagebox.showinfo("Done", f"Saved:\n{out_path}")
-
 
 if __name__ == "__main__":
     App().mainloop()
