@@ -36,9 +36,9 @@ LEGEND["Low_kV"]  = LEGEND["Low_kV"].astype(float).round(6)
 LEGEND["MVA"]     = LEGEND["MVA"].astype(float).round(6)
 
 DATA_COL_ALIASES = {
-    "From Nom kV": ["From Nom kV", "FromNomkV", "From kV", "From KV", "From Nom KV"],
-    "To Nom kV":   ["To Nom kV", "ToNomkV", "To kV", "To KV", "To Nom KV"],
-    "Lim MVA":     ["Lim MVA", "Lim MVA A", "Limit MVA", "MVA", "Size MVA", "Rating MVA"],
+    "From":   ["From", "From kV", "From KV"],
+    "To":     ["To", "To kV", "To KV"],
+    "Lim MVA": ["Lim MVA", "Lim MVA A", "Limit MVA", "MVA", "Size MVA", "Rating MVA"],
 }
 
 def _normalize_cols(df: pd.DataFrame) -> pd.DataFrame:
@@ -73,8 +73,8 @@ def read_sheet_with_auto_header(xlsx_path: str, sheet_name: str, scan_rows: int 
     preview = preview.fillna("").astype(str)
     preview = preview.apply(lambda col: col.str.strip())
 
-    req_from = set(a.lower() for a in DATA_COL_ALIASES["From Nom kV"])
-    req_to   = set(a.lower() for a in DATA_COL_ALIASES["To Nom kV"])
+    req_from = set(a.lower() for a in DATA_COL_ALIASES["From"])
+    req_to   = set(a.lower() for a in DATA_COL_ALIASES["To"])
     req_mva  = set(a.lower() for a in DATA_COL_ALIASES["Lim MVA"])
 
     header_row = None
@@ -94,8 +94,8 @@ def read_sheet_with_auto_header(xlsx_path: str, sheet_name: str, scan_rows: int 
 def add_core_loss(df: pd.DataFrame, allow_nearest_mva: bool, mva_tol: float) -> pd.DataFrame:
     df = _normalize_cols(df)
 
-    c_from = _pick_col(df, "From Nom kV")
-    c_to   = _pick_col(df, "To Nom kV")
+    c_from = _pick_col(df, "From")
+    c_to   = _pick_col(df, "To")
     c_mva  = _pick_col(df, "Lim MVA")
 
     out = df.copy()
@@ -105,10 +105,8 @@ def add_core_loss(df: pd.DataFrame, allow_nearest_mva: bool, mva_tol: float) -> 
 
     out["High_kV"] = out[["From_kV", "To_kV"]].max(axis=1).round(6)
     out["Low_kV"]  = out[["From_kV", "To_kV"]].min(axis=1).round(6)
-    out["Same_kV"] = (out["From_kV"] == out["To_kV"])
 
     merged = out.merge(LEGEND, how="left", on=["High_kV", "Low_kV", "MVA"])
-
     merged["Match_Status"] = np.where(merged["Core_W"].notna(), "OK", "NO EXACT MATCH")
 
     if allow_nearest_mva:
@@ -123,6 +121,7 @@ def add_core_loss(df: pd.DataFrame, allow_nearest_mva: bool, mva_tol: float) -> 
                 hk = merged.at[i, "High_kV"]
                 lk = merged.at[i, "Low_kV"]
                 mva = merged.at[i, "MVA"]
+
                 g = legend_groups.get((hk, lk))
                 if g is None or g.empty:
                     merged.at[i, "Match_Status"] = "NO LEGEND FOR kV PAIR"
@@ -136,54 +135,41 @@ def add_core_loss(df: pd.DataFrame, allow_nearest_mva: bool, mva_tol: float) -> 
                 if diff_val <= mva_tol:
                     merged.at[i, "Core_W"] = best["Core_W"]
                     used_mva.at[i] = best["MVA"]
-                    merged.at[i, "Match_Status"] = f"NEAREST MVA ({best['MVA']})"
+                    merged.at[i, "Match_Status"] = "NEAREST"
                 else:
-                    merged.at[i, "Match_Status"] = f"NO MATCH (nearest {best['MVA']}, diff {diff_val:g})"
+                    merged.at[i, "Match_Status"] = "NO MATCH"
 
             merged["Legend_MVA_Used"] = used_mva
 
-    merged["Pair"] = merged["High_kV"].apply(fmt_kv) + "-" + merged["Low_kV"].apply(fmt_kv)
+    merged["HighToLow"] = merged["High_kV"].apply(fmt_kv) + "-" + merged["Low_kV"].apply(fmt_kv)
     return merged
 
-def build_summary(merged: pd.DataFrame) -> (pd.DataFrame, pd.DataFrame):
-    pair_summary = (
-        merged.groupby(["High_kV", "Low_kV", "Pair"], dropna=False)
+def build_summary(merged: pd.DataFrame) -> pd.DataFrame:
+    summary = (
+        merged.groupby(["High_kV", "Low_kV", "HighToLow"], dropna=False)
               .agg(
-                  Count=("Pair", "size"),
+                  Count=("HighToLow", "size"),
                   Core_W_Sum=("Core_W", "sum"),
-                  OK=("Match_Status", lambda s: int((s == "OK").sum())),
-                  NonOK=("Match_Status", lambda s: int((s != "OK").sum())),
               )
               .reset_index()
-              .sort_values(["High_kV", "Low_kV"])
+              .sort_values(["High_kV", "Low_kV"], ascending=[False, False])
     )
-
-    same_kv_rows = merged[merged["Same_kV"]].copy()
-    same_kv_summary = (
-        same_kv_rows.groupby(["From_kV"], dropna=False)
-                    .agg(Count=("From_kV", "size"), Core_W_Sum=("Core_W", "sum"))
-                    .reset_index()
-                    .rename(columns={"From_kV": "kV"})
-                    .sort_values(["kV"])
-    )
-
-    return pair_summary, same_kv_summary
+    return summary
 
 def run_process(input_path: str, sheet_name: str, output_path: str,
                 allow_nearest_mva: bool, mva_tol: float) -> None:
     data_df = read_sheet_with_auto_header(input_path, sheet_name)
     merged = add_core_loss(data_df, allow_nearest_mva, mva_tol)
-    pair_summary, same_kv_summary = build_summary(merged)
+    summary = build_summary(merged)
 
     with pd.ExcelWriter(output_path, engine="openpyxl") as w:
-        pair_summary.to_excel(w, sheet_name="CoreLoss_Summary", index=False)
-        same_kv_summary.to_excel(w, sheet_name="SameKV_CoreLoss", index=False)
+        summary.to_excel(w, sheet_name="CoreLoss_Summary", index=False)
 
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Core Loss Summarizer")
-        self.geometry("820x360")
+        self.geometry("820x330")
 
         self.in_path = tk.StringVar()
         self.out_path = tk.StringVar()
@@ -236,14 +222,9 @@ class App(tk.Tk):
             messagebox.showerror("Error", f"Failed to read workbook sheets:\n{e}")
             return
 
-        self.sheet_combo["values"] = reminder = sheets
+        self.sheet_combo["values"] = sheets
         if sheets:
-            guess = None
-            for s in sheets:
-                if "xfmr" in s.lower() or "xfmrs" in s.lower():
-                    guess = s
-                    break
-            self.sheet_name.set(guess if guess else sheets[0])
+            self.sheet_name.set(sheets[0])
 
         if not self.out_path.get():
             self.out_path.set(path.replace(".xlsx", "_coreloss_summary.xlsx"))
