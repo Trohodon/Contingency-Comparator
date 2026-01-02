@@ -1,16 +1,13 @@
 import os
-import sys
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
 from PIL import Image
 
-
 SIZES = [16, 32, 48, 64, 128, 256]
 
 
 def _center_crop_to_square(img: Image.Image) -> Image.Image:
-    """Center-crop the image to a square (keeps the most important center area)."""
     w, h = img.size
     side = min(w, h)
     left = (w - side) // 2
@@ -19,7 +16,6 @@ def _center_crop_to_square(img: Image.Image) -> Image.Image:
 
 
 def _pad_to_square(img: Image.Image, bg=(0, 0, 0, 0)) -> Image.Image:
-    """Pad the image to a square using a transparent background."""
     w, h = img.size
     side = max(w, h)
     out = Image.new("RGBA", (side, side), bg)
@@ -27,19 +23,7 @@ def _pad_to_square(img: Image.Image, bg=(0, 0, 0, 0)) -> Image.Image:
     return out
 
 
-def convert_png_to_ico(png_path: str, ico_path: str, mode: str):
-    """
-    mode:
-      - "crop": center crop to square
-      - "pad": pad to square (transparent)
-      - "stretch": resize directly to square (can distort)
-    """
-    if not os.path.isfile(png_path):
-        raise FileNotFoundError(png_path)
-
-    img = Image.open(png_path)
-
-    # Ensure RGBA for transparency support
+def _prepare_base(img: Image.Image, mode: str) -> Image.Image:
     if img.mode != "RGBA":
         img = img.convert("RGBA")
 
@@ -48,23 +32,31 @@ def convert_png_to_ico(png_path: str, ico_path: str, mode: str):
     elif mode == "pad":
         base = _pad_to_square(img)
     elif mode == "stretch":
-        # We'll just treat base as-is; resizing later will distort if not square
-        base = img
+        # make it square first (distorts if not square)
+        side = max(img.size)
+        base = img.resize((side, side), Image.LANCZOS)
     else:
         raise ValueError("mode must be crop/pad/stretch")
+    return base
 
-    # If stretch mode, still force a square for proper icon sizes
-    if mode == "stretch":
-        base = base.resize((max(base.size), max(base.size)), Image.LANCZOS)
 
-    # IMPORTANT:
-    # Pillow can write a multi-size ICO if you pass sizes=[...]
-    # It will generate each size using its internal resampling from the base image.
-    base.save(
-        ico_path,
-        format="ICO",
-        sizes=[(s, s) for s in SIZES],
-    )
+def export_multi_ico(base_img: Image.Image, ico_path: str):
+    """One ICO file containing all sizes."""
+    base_img.save(ico_path, format="ICO", sizes=[(s, s) for s in SIZES])
+
+
+def export_split_icos(base_img: Image.Image, out_dir: str, base_name: str):
+    """
+    Writes one .ico per size:
+      base_name_16.ico, base_name_32.ico, ...
+    """
+    os.makedirs(out_dir, exist_ok=True)
+
+    for s in SIZES:
+        out_path = os.path.join(out_dir, f"{base_name}_{s}.ico")
+        im = base_img.resize((s, s), Image.LANCZOS)
+        # Save a single-size ICO
+        im.save(out_path, format="ICO", sizes=[(s, s)])
 
 
 class IconMakerApp(ttk.Frame):
@@ -73,14 +65,18 @@ class IconMakerApp(ttk.Frame):
         self.master = master
 
         self.png_path = tk.StringVar(value="")
-        self.ico_path = tk.StringVar(value="")
-        self.mode_var = tk.StringVar(value="pad")  # pad is safest for logos
+        self.out_dir = tk.StringVar(value="")
+        self.base_name = tk.StringVar(value="app")
+        self.mode_var = tk.StringVar(value="pad")
+
+        self.make_combined_var = tk.BooleanVar(value=True)
+        self.make_split_var = tk.BooleanVar(value=True)
 
         self._build_ui()
 
     def _build_ui(self):
-        self.master.title("PNG → ICO Icon Maker")
-        self.master.minsize(680, 260)
+        self.master.title("PNG → ICO Exporter (Combined + Split Sizes)")
+        self.master.minsize(760, 330)
 
         try:
             style = ttk.Style()
@@ -91,31 +87,32 @@ class IconMakerApp(ttk.Frame):
         wrap = ttk.Frame(self.master, padding=(14, 14))
         wrap.pack(fill=tk.BOTH, expand=True)
 
-        title = ttk.Label(wrap, text="PNG → Windows Icon (.ico)", font=("Segoe UI", 14, "bold"))
-        title.grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
-
-        sub = ttk.Label(
-            wrap,
-            text="Creates a single .ico file containing 16/32/48/64/128/256 sizes.",
-            foreground="#5C6773",
+        ttk.Label(wrap, text="PNG → Windows Icons", font=("Segoe UI", 14, "bold")).grid(
+            row=0, column=0, columnspan=3, sticky="w", pady=(0, 6)
         )
-        sub.grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 12))
+        ttk.Label(
+            wrap,
+            text="Exports a combined app.ico (all sizes) AND/OR separate app_16.ico, app_32.ico, ...",
+            foreground="#5C6773",
+        ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 12))
 
-        # PNG input
+        # Input PNG
         ttk.Label(wrap, text="Input PNG:").grid(row=2, column=0, sticky="w", pady=4)
-        png_entry = ttk.Entry(wrap, textvariable=self.png_path)
-        png_entry.grid(row=2, column=1, sticky="ew", pady=4, padx=(8, 8))
+        ttk.Entry(wrap, textvariable=self.png_path).grid(row=2, column=1, sticky="ew", padx=8, pady=4)
         ttk.Button(wrap, text="Browse…", command=self._browse_png).grid(row=2, column=2, sticky="e", pady=4)
 
-        # ICO output
-        ttk.Label(wrap, text="Output ICO:").grid(row=3, column=0, sticky="w", pady=4)
-        ico_entry = ttk.Entry(wrap, textvariable=self.ico_path)
-        ico_entry.grid(row=3, column=1, sticky="ew", pady=4, padx=(8, 8))
-        ttk.Button(wrap, text="Save as…", command=self._browse_ico).grid(row=3, column=2, sticky="e", pady=4)
+        # Output folder
+        ttk.Label(wrap, text="Output folder:").grid(row=3, column=0, sticky="w", pady=4)
+        ttk.Entry(wrap, textvariable=self.out_dir).grid(row=3, column=1, sticky="ew", padx=8, pady=4)
+        ttk.Button(wrap, text="Choose…", command=self._browse_out_dir).grid(row=3, column=2, sticky="e", pady=4)
+
+        # Base name
+        ttk.Label(wrap, text="Base name:").grid(row=4, column=0, sticky="w", pady=4)
+        ttk.Entry(wrap, textvariable=self.base_name, width=18).grid(row=4, column=1, sticky="w", padx=8, pady=4)
 
         # Mode
         mode_frame = ttk.LabelFrame(wrap, text="Square handling", padding=(10, 8))
-        mode_frame.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(10, 8))
+        mode_frame.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(10, 8))
 
         ttk.Radiobutton(
             mode_frame, text="Pad to square (transparent) — best for logos",
@@ -132,15 +129,26 @@ class IconMakerApp(ttk.Frame):
             value="stretch", variable=self.mode_var
         ).grid(row=2, column=0, sticky="w", pady=2)
 
+        # Output options
+        out_frame = ttk.LabelFrame(wrap, text="Outputs", padding=(10, 8))
+        out_frame.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(8, 8))
+
+        ttk.Checkbutton(
+            out_frame, text="Create combined ICO (base_name.ico with all sizes inside)",
+            variable=self.make_combined_var
+        ).grid(row=0, column=0, sticky="w", pady=2)
+
+        ttk.Checkbutton(
+            out_frame, text="Create split ICOs (base_name_16.ico, base_name_32.ico, ...)",
+            variable=self.make_split_var
+        ).grid(row=1, column=0, sticky="w", pady=2)
+
         # Buttons
         btn_row = ttk.Frame(wrap)
-        btn_row.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(10, 0))
-        btn_row.columnconfigure(0, weight=1)
-
-        ttk.Button(btn_row, text="Create .ico", command=self._run).pack(side=tk.RIGHT)
+        btn_row.grid(row=7, column=0, columnspan=3, sticky="ew", pady=(10, 0))
+        ttk.Button(btn_row, text="Create icons", command=self._run).pack(side=tk.RIGHT)
         ttk.Button(btn_row, text="Quit", command=self.master.destroy).pack(side=tk.RIGHT, padx=(0, 8))
 
-        # Resize behavior
         wrap.columnconfigure(1, weight=1)
 
     def _browse_png(self):
@@ -152,42 +160,61 @@ class IconMakerApp(ttk.Frame):
             return
         self.png_path.set(path)
 
-        # Auto-suggest output path
-        base, _ = os.path.splitext(path)
-        suggested = base + ".ico"
-        self.ico_path.set(suggested)
+        # Auto-fill output folder to same folder as input
+        folder = os.path.dirname(path)
+        if folder and not self.out_dir.get().strip():
+            self.out_dir.set(folder)
 
-    def _browse_ico(self):
-        path = filedialog.asksaveasfilename(
-            title="Save icon as",
-            defaultextension=".ico",
-            filetypes=[("Icon files", "*.ico"), ("All files", "*.*")]
-        )
+        # Auto base name from file if still default
+        if self.base_name.get().strip() == "app":
+            base = os.path.splitext(os.path.basename(path))[0]
+            self.base_name.set(base)
+
+    def _browse_out_dir(self):
+        path = filedialog.askdirectory(title="Choose an output folder")
         if not path:
             return
-        self.ico_path.set(path)
+        self.out_dir.set(path)
 
     def _run(self):
         png = self.png_path.get().strip()
-        ico = self.ico_path.get().strip()
+        out_dir = self.out_dir.get().strip()
+        base_name = self.base_name.get().strip() or "app"
         mode = self.mode_var.get().strip()
 
         if not png or not os.path.isfile(png):
             messagebox.showerror("Missing input", "Please choose a valid input PNG.")
             return
-        if not ico:
-            messagebox.showerror("Missing output", "Please choose an output ICO path.")
+        if not out_dir:
+            messagebox.showerror("Missing output folder", "Please choose an output folder.")
+            return
+
+        if not (self.make_combined_var.get() or self.make_split_var.get()):
+            messagebox.showwarning("No outputs selected", "Select at least one output option.")
             return
 
         try:
-            convert_png_to_ico(png, ico, mode)
+            img = Image.open(png)
+            base = _prepare_base(img, mode)
+
+            created = []
+
+            if self.make_combined_var.get():
+                combined_path = os.path.join(out_dir, f"{base_name}.ico")
+                export_multi_ico(base, combined_path)
+                created.append(os.path.basename(combined_path))
+
+            if self.make_split_var.get():
+                export_split_icos(base, out_dir, base_name)
+                created.extend([f"{base_name}_{s}.ico" for s in SIZES])
+
         except Exception as e:
-            messagebox.showerror("Failed", f"Could not create icon:\n\n{e}")
+            messagebox.showerror("Failed", f"Could not create icons:\n\n{e}")
             return
 
         messagebox.showinfo(
             "Success",
-            f"Icon created!\n\n{ico}\n\nContains sizes: {', '.join(map(str, SIZES))}"
+            "Created:\n\n" + "\n".join(created)
         )
 
 
