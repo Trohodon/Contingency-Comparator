@@ -1,0 +1,202 @@
+import os
+import sys
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox
+
+from PIL import Image
+
+
+SIZES = [16, 32, 48, 64, 128, 256]
+
+
+def _center_crop_to_square(img: Image.Image) -> Image.Image:
+    """Center-crop the image to a square (keeps the most important center area)."""
+    w, h = img.size
+    side = min(w, h)
+    left = (w - side) // 2
+    top = (h - side) // 2
+    return img.crop((left, top, left + side, top + side))
+
+
+def _pad_to_square(img: Image.Image, bg=(0, 0, 0, 0)) -> Image.Image:
+    """Pad the image to a square using a transparent background."""
+    w, h = img.size
+    side = max(w, h)
+    out = Image.new("RGBA", (side, side), bg)
+    out.paste(img, ((side - w) // 2, (side - h) // 2))
+    return out
+
+
+def convert_png_to_ico(png_path: str, ico_path: str, mode: str):
+    """
+    mode:
+      - "crop": center crop to square
+      - "pad": pad to square (transparent)
+      - "stretch": resize directly to square (can distort)
+    """
+    if not os.path.isfile(png_path):
+        raise FileNotFoundError(png_path)
+
+    img = Image.open(png_path)
+
+    # Ensure RGBA for transparency support
+    if img.mode != "RGBA":
+        img = img.convert("RGBA")
+
+    if mode == "crop":
+        base = _center_crop_to_square(img)
+    elif mode == "pad":
+        base = _pad_to_square(img)
+    elif mode == "stretch":
+        # We'll just treat base as-is; resizing later will distort if not square
+        base = img
+    else:
+        raise ValueError("mode must be crop/pad/stretch")
+
+    # If stretch mode, still force a square for proper icon sizes
+    if mode == "stretch":
+        base = base.resize((max(base.size), max(base.size)), Image.LANCZOS)
+
+    # IMPORTANT:
+    # Pillow can write a multi-size ICO if you pass sizes=[...]
+    # It will generate each size using its internal resampling from the base image.
+    base.save(
+        ico_path,
+        format="ICO",
+        sizes=[(s, s) for s in SIZES],
+    )
+
+
+class IconMakerApp(ttk.Frame):
+    def __init__(self, master):
+        super().__init__(master)
+        self.master = master
+
+        self.png_path = tk.StringVar(value="")
+        self.ico_path = tk.StringVar(value="")
+        self.mode_var = tk.StringVar(value="pad")  # pad is safest for logos
+
+        self._build_ui()
+
+    def _build_ui(self):
+        self.master.title("PNG → ICO Icon Maker")
+        self.master.minsize(680, 260)
+
+        try:
+            style = ttk.Style()
+            style.theme_use("vista")
+        except Exception:
+            pass
+
+        wrap = ttk.Frame(self.master, padding=(14, 14))
+        wrap.pack(fill=tk.BOTH, expand=True)
+
+        title = ttk.Label(wrap, text="PNG → Windows Icon (.ico)", font=("Segoe UI", 14, "bold"))
+        title.grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
+
+        sub = ttk.Label(
+            wrap,
+            text="Creates a single .ico file containing 16/32/48/64/128/256 sizes.",
+            foreground="#5C6773",
+        )
+        sub.grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 12))
+
+        # PNG input
+        ttk.Label(wrap, text="Input PNG:").grid(row=2, column=0, sticky="w", pady=4)
+        png_entry = ttk.Entry(wrap, textvariable=self.png_path)
+        png_entry.grid(row=2, column=1, sticky="ew", pady=4, padx=(8, 8))
+        ttk.Button(wrap, text="Browse…", command=self._browse_png).grid(row=2, column=2, sticky="e", pady=4)
+
+        # ICO output
+        ttk.Label(wrap, text="Output ICO:").grid(row=3, column=0, sticky="w", pady=4)
+        ico_entry = ttk.Entry(wrap, textvariable=self.ico_path)
+        ico_entry.grid(row=3, column=1, sticky="ew", pady=4, padx=(8, 8))
+        ttk.Button(wrap, text="Save as…", command=self._browse_ico).grid(row=3, column=2, sticky="e", pady=4)
+
+        # Mode
+        mode_frame = ttk.LabelFrame(wrap, text="Square handling", padding=(10, 8))
+        mode_frame.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(10, 8))
+
+        ttk.Radiobutton(
+            mode_frame, text="Pad to square (transparent) — best for logos",
+            value="pad", variable=self.mode_var
+        ).grid(row=0, column=0, sticky="w", pady=2)
+
+        ttk.Radiobutton(
+            mode_frame, text="Center crop to square — best for photos",
+            value="crop", variable=self.mode_var
+        ).grid(row=1, column=0, sticky="w", pady=2)
+
+        ttk.Radiobutton(
+            mode_frame, text="Stretch to square (may distort)",
+            value="stretch", variable=self.mode_var
+        ).grid(row=2, column=0, sticky="w", pady=2)
+
+        # Buttons
+        btn_row = ttk.Frame(wrap)
+        btn_row.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(10, 0))
+        btn_row.columnconfigure(0, weight=1)
+
+        ttk.Button(btn_row, text="Create .ico", command=self._run).pack(side=tk.RIGHT)
+        ttk.Button(btn_row, text="Quit", command=self.master.destroy).pack(side=tk.RIGHT, padx=(0, 8))
+
+        # Resize behavior
+        wrap.columnconfigure(1, weight=1)
+
+    def _browse_png(self):
+        path = filedialog.askopenfilename(
+            title="Select a PNG file",
+            filetypes=[("PNG files", "*.png"), ("All files", "*.*")]
+        )
+        if not path:
+            return
+        self.png_path.set(path)
+
+        # Auto-suggest output path
+        base, _ = os.path.splitext(path)
+        suggested = base + ".ico"
+        self.ico_path.set(suggested)
+
+    def _browse_ico(self):
+        path = filedialog.asksaveasfilename(
+            title="Save icon as",
+            defaultextension=".ico",
+            filetypes=[("Icon files", "*.ico"), ("All files", "*.*")]
+        )
+        if not path:
+            return
+        self.ico_path.set(path)
+
+    def _run(self):
+        png = self.png_path.get().strip()
+        ico = self.ico_path.get().strip()
+        mode = self.mode_var.get().strip()
+
+        if not png or not os.path.isfile(png):
+            messagebox.showerror("Missing input", "Please choose a valid input PNG.")
+            return
+        if not ico:
+            messagebox.showerror("Missing output", "Please choose an output ICO path.")
+            return
+
+        try:
+            convert_png_to_ico(png, ico, mode)
+        except Exception as e:
+            messagebox.showerror("Failed", f"Could not create icon:\n\n{e}")
+            return
+
+        messagebox.showinfo(
+            "Success",
+            f"Icon created!\n\n{ico}\n\nContains sizes: {', '.join(map(str, SIZES))}"
+        )
+
+
+def main():
+    root = tk.Tk()
+    app = IconMakerApp(root)
+    app.pack(fill=tk.BOTH, expand=True)
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    main()
