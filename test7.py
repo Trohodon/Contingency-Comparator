@@ -9,8 +9,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from openpyxl import Workbook
-from openpyxl.styles import Alignment, Font
-from openpyxl.utils import get_column_letter
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
 
 SLOTS = OrderedDict(
@@ -159,32 +158,31 @@ def compare_sets(dict_2026, dict_2030):
     }
 
 
-def autofit_columns(ws, widths=None):
-    widths = widths or {}
-
-    for column_cells in ws.columns:
-        column_index = column_cells[0].column
-        letter = get_column_letter(column_index)
-        if letter in widths:
-            ws.column_dimensions[letter].width = widths[letter]
-            continue
-
-        max_length = 0
-        for cell in column_cells:
-            value = "" if cell.value is None else str(cell.value)
-            max_length = max(max_length, len(value))
-        ws.column_dimensions[letter].width = min(max(max_length + 2, 12), 40)
+HEADER_FILL = PatternFill(fill_type="solid", fgColor="D9E2F3")
+STATUS_FILLS = {
+    "Added": PatternFill(fill_type="solid", fgColor="E2F0D9"),
+    "Removed": PatternFill(fill_type="solid", fgColor="FDE9E7"),
+    "Modified": PatternFill(fill_type="solid", fgColor="FFF2CC"),
+    "Unchanged": PatternFill(fill_type="solid", fgColor="F2F2F2"),
+}
+THIN_BOTTOM_BORDER = Border(bottom=Side(style="thin", color="808080"))
 
 
 def style_header_row(ws, row_number):
     for cell in ws[row_number]:
         cell.font = Font(bold=True)
         cell.alignment = Alignment(horizontal="left", vertical="top")
+        cell.fill = HEADER_FILL
+        cell.border = THIN_BOTTOM_BORDER
 
 
-def write_table(ws, start_row, headers, rows, wrap_columns=None, fixed_widths=None):
+def apply_fixed_column_widths(ws, widths):
+    for column_letter, width in widths.items():
+        ws.column_dimensions[column_letter].width = width
+
+
+def write_table(ws, start_row, headers, rows, wrap_columns=None):
     wrap_columns = set(wrap_columns or [])
-    fixed_widths = fixed_widths or {}
 
     for col_idx, header in enumerate(headers, start=1):
         ws.cell(row=start_row, column=col_idx, value=header)
@@ -199,50 +197,165 @@ def write_table(ws, start_row, headers, rows, wrap_columns=None, fixed_widths=No
                 horizontal="left",
             )
 
-    header_to_letter = {header: get_column_letter(idx) for idx, header in enumerate(headers, start=1)}
-    autofit_columns(
-        ws,
-        widths={header_to_letter[header]: width for header, width in fixed_widths.items() if header in header_to_letter},
-    )
-    ws.freeze_panes = "A2"
+
+def build_side_by_side_rows(results, status):
+    if status == "Added":
+        source_rows = results["added"]
+        rows = [
+            {
+                "Contingency": row["Contingency"],
+                "Actions_2026": "",
+                "Actions_2030": row["Actions"],
+                "Status": "Added",
+            }
+            for row in source_rows
+        ]
+    elif status == "Removed":
+        source_rows = results["removed"]
+        rows = [
+            {
+                "Contingency": row["Contingency"],
+                "Actions_2026": row["Actions"],
+                "Actions_2030": "",
+                "Status": "Removed",
+            }
+            for row in source_rows
+        ]
+    elif status == "Unchanged":
+        source_rows = results["unchanged"]
+        rows = [
+            {
+                "Contingency": row["Contingency"],
+                "Actions_2026": row["Actions"],
+                "Actions_2030": row["Actions"],
+                "Status": "Unchanged",
+            }
+            for row in source_rows
+        ]
+    else:
+        source_rows = results["modified"]
+        rows = [
+            {
+                "Contingency": row["Contingency"],
+                "Actions_2026": row["Actions_2026"],
+                "Actions_2030": row["Actions_2030"],
+                "Status": "Modified",
+            }
+            for row in source_rows
+        ]
+
+    return sorted(rows, key=lambda row: row["Contingency"])
+
+
+def apply_status_row_fill(ws, start_row, status_column_index, row_count):
+    for row_idx in range(start_row + 1, start_row + 1 + row_count):
+        status = ws.cell(row=row_idx, column=status_column_index).value
+        fill = STATUS_FILLS.get(status)
+        if fill is None:
+            continue
+        for col_idx in range(1, status_column_index + 1):
+            ws.cell(row=row_idx, column=col_idx).fill = fill
 
 
 def write_summary_sheet(ws, prefix, results, file_paths):
     ws.title = f"{prefix}_Summary"
-
-    path_rows = [
-        {"Label": f"{prefix} 2026", "Path": file_paths[f"{prefix}_2026"]},
-        {"Label": f"{prefix} 2030", "Path": file_paths[f"{prefix}_2030"]},
-        {"Label": "Generated", "Path": datetime.now().strftime("%Y-%m-%d %H:%M:%S")},
-    ]
-
-    write_table(
-        ws,
-        start_row=1,
-        headers=["Label", "Path"],
-        rows=path_rows,
-        wrap_columns={"Path"},
-        fixed_widths={"Path": 90},
-    )
-
-    summary_start = len(path_rows) + 3
     metric_rows = [{"Metric": metric, "Count": count} for metric, count in results["summary"].items()]
-    write_table(ws, start_row=summary_start, headers=["Metric", "Count"], rows=metric_rows)
+    write_table(ws, start_row=1, headers=["Metric", "Count"], rows=metric_rows)
     ws.freeze_panes = "A2"
 
+    how_to_read_row = len(metric_rows) + 3
+    ws.cell(
+        row=how_to_read_row,
+        column=1,
+        value="HOW TO READ: Actions_2026 is left, Actions_2030 is right.",
+    )
+    ws.cell(row=how_to_read_row, column=1).font = Font(bold=True, size=14)
+    ws.cell(row=how_to_read_row, column=1).alignment = Alignment(horizontal="left", vertical="top")
 
-def write_detail_sheet(ws, title, headers, rows):
+    note_rows = [
+        {
+            "Status": "Added",
+            "Meaning": "Exists only in 2030. There is no matching contingency in 2026.",
+        },
+        {
+            "Status": "Removed",
+            "Meaning": "Exists only in 2026. It is not present in 2030.",
+        },
+        {
+            "Status": "Modified",
+            "Meaning": "Exists in both years, but the action lines changed.",
+        },
+        {
+            "Status": "Unchanged",
+            "Meaning": "Exists in both years, and the action lines match.",
+        },
+    ]
+    write_table(
+        ws,
+        start_row=how_to_read_row + 2,
+        headers=["Status", "Meaning"],
+        rows=note_rows,
+        wrap_columns={"Meaning"},
+    )
+    apply_fixed_column_widths(ws, {"A": 18, "B": 100})
+
+    input_rows = [
+        {"Label": "Generated", "Value": datetime.now().strftime("%Y-%m-%d %H:%M:%S")},
+        {"Label": f"{prefix} 2026", "Value": file_paths[f"{prefix}_2026"]},
+        {"Label": f"{prefix} 2030", "Value": file_paths[f"{prefix}_2030"]},
+    ]
+    inputs_start_row = how_to_read_row + 2 + len(note_rows) + 2
+    write_table(ws, start_row=inputs_start_row, headers=["Label", "Value"], rows=input_rows, wrap_columns={"Value"})
+    apply_fixed_column_widths(ws, {"A": 18, "B": 100})
+
+
+def write_start_here_sheet(ws, file_paths):
+    ws.title = "Start_Here"
+    ws.freeze_panes = "A2"
+    ws["A1"] = "Contingency Compare Workbook"
+    ws["A1"].font = Font(bold=True, size=14)
+
+    rows = [
+        ("What was compared", ""),
+        ("P1 2026", file_paths["P1_2026"]),
+        ("P1 2030", file_paths["P1_2030"]),
+        ("P2 2026", file_paths["P2_2026"]),
+        ("P2 2030", file_paths["P2_2030"]),
+        ("", ""),
+        ("Status meaning", ""),
+        ("Added", "Only in 2030. Left side blank, right side filled."),
+        ("Removed", "Only in 2026. Left side filled, right side blank."),
+        ("Modified", "Exists in both years, but actions changed."),
+        ("Unchanged", "Exists in both years, and actions match."),
+        ("", ""),
+        ("Example", ""),
+        ("Reading a row", "Compare Actions_2026 on the left to Actions_2030 on the right, then confirm Status."),
+    ]
+
+    for row_idx, (label, value) in enumerate(rows, start=3):
+        ws.cell(row=row_idx, column=1, value=label)
+        ws.cell(row=row_idx, column=2, value=value)
+        ws.cell(row=row_idx, column=1).alignment = Alignment(horizontal="left", vertical="top")
+        ws.cell(row=row_idx, column=2).alignment = Alignment(horizontal="left", vertical="top", wrap_text=True)
+        if value == "" and label:
+            ws.cell(row=row_idx, column=1).font = Font(bold=True, size=12)
+
+    apply_fixed_column_widths(ws, {"A": 24, "B": 100})
+
+
+def write_detail_sheet(ws, title, rows):
     ws.title = title
-    wrap_columns = {header for header in headers if "Actions" in header}
-    fixed_widths = {header: 70 for header in headers if "Actions" in header}
+    headers = ["Contingency", "Actions_2026", "Actions_2030", "Status"]
     write_table(
         ws,
         start_row=1,
         headers=headers,
         rows=rows,
-        wrap_columns=wrap_columns,
-        fixed_widths=fixed_widths,
+        wrap_columns={"Actions_2026", "Actions_2030"},
     )
+    apply_fixed_column_widths(ws, {"A": 45, "B": 70, "C": 70, "D": 12})
+    apply_status_row_fill(ws, start_row=1, status_column_index=4, row_count=len(rows))
+    ws.freeze_panes = "A2"
 
 
 def write_inputs_sheet(ws, file_paths):
@@ -264,29 +377,28 @@ def write_inputs_sheet(ws, file_paths):
         headers=["Slot", "Filename", "Full_Path"],
         rows=rows,
         wrap_columns={"Full_Path"},
-        fixed_widths={"Full_Path": 90},
     )
+    apply_fixed_column_widths(ws, {"A": 18, "B": 40, "C": 100})
+    ws.freeze_panes = "A2"
 
 
 def write_excel_report(out_path, results_p1, results_p2, file_paths):
     workbook = Workbook()
-    workbook.remove(workbook.active)
+    write_start_here_sheet(workbook.active, file_paths)
 
     for prefix, results in (("P1", results_p1), ("P2", results_p2)):
         write_summary_sheet(workbook.create_sheet(), prefix, results, file_paths)
-        write_detail_sheet(workbook.create_sheet(), f"{prefix}_Added", ["Contingency", "Actions"], results["added"])
-        write_detail_sheet(workbook.create_sheet(), f"{prefix}_Removed", ["Contingency", "Actions"], results["removed"])
+        write_detail_sheet(workbook.create_sheet(), f"{prefix}_Added", build_side_by_side_rows(results, "Added"))
+        write_detail_sheet(workbook.create_sheet(), f"{prefix}_Removed", build_side_by_side_rows(results, "Removed"))
         write_detail_sheet(
             workbook.create_sheet(),
             f"{prefix}_Modified",
-            ["Contingency", "Actions_2026", "Actions_2030"],
-            results["modified"],
+            build_side_by_side_rows(results, "Modified"),
         )
         write_detail_sheet(
             workbook.create_sheet(),
             f"{prefix}_Unchanged",
-            ["Contingency", "Actions"],
-            results["unchanged"],
+            build_side_by_side_rows(results, "Unchanged"),
         )
 
     write_inputs_sheet(workbook.create_sheet(), file_paths)
