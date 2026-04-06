@@ -4,30 +4,28 @@ import math
 from datetime import datetime, date, time
 
 
-CLEAR_AIR_COEFFICIENTS_SI = {
-    "A": -42.2391,
-    "B": 63.8044,
-    "C": -1.9220,
-    "D": 3.46921e-2,
-    "E": -3.61118e-4,
-    "F": 1.94318e-6,
-    "G": -4.07608e-9,
+FT_PER_M = 3.280839895013123
+W_PER_FT2_TO_W_PER_M2 = 10.763910416709722
+
+
+CLEAR_AIR_COEFFICIENTS_US = {
+    "A": -3.9241,
+    "B": 5.9276,
+    "C": -0.17856,
+    "D": 0.003223,
+    "E": -3.3549e-5,
+    "F": 1.8053e-7,
+    "G": -3.7868e-10,
 }
 
-INDUSTRIAL_AIR_COEFFICIENTS_SI = {
-    "A": 53.1821,
-    "B": 14.2110,
-    "C": 6.6138e-1,
-    "D": -3.1658e-2,
-    "E": 5.4654e-4,
-    "F": -4.3446e-6,
-    "G": 1.3236e-8,
-}
-
-ELEVATION_CORRECTION_COEFFICIENTS_SI = {
-    "A": 1.0,
-    "B": 1.148e-4,
-    "C": -1.108e-8,
+INDUSTRIAL_AIR_COEFFICIENTS_US = {
+    "A": 4.9408,
+    "B": 1.3202,
+    "C": 0.061444,
+    "D": -0.0029411,
+    "E": 5.07752e-5,
+    "F": -4.03627e-7,
+    "G": 1.22967e-9,
 }
 
 
@@ -105,17 +103,15 @@ def decimal_hour(input_time: time) -> float:
 
 
 def hour_angle_deg(local_time_hours: float) -> float:
-    # IEEE 738 Eq. (26)
     return (local_time_hours - 12.0) * 15.0
 
 
 def solar_declination_deg(day_num: int) -> float:
-    # IEEE 738 Eq. (27)
-    return 23.45 * _sin_deg(((284.0 + day_num) / 365.0) * 360.0)
+    # workbook-style coefficient
+    return 23.4583 * _sin_deg(((284.0 + day_num) / 365.0) * 360.0)
 
 
 def solar_altitude_deg(latitude_deg: float, declination_deg: float, hour_angle_deg_value: float) -> float:
-    # IEEE 738 Eq. (25)
     hc = _asin_deg(
         _cos_deg(latitude_deg) * _cos_deg(declination_deg) * _cos_deg(hour_angle_deg_value)
         + _sin_deg(latitude_deg) * _sin_deg(declination_deg)
@@ -124,7 +120,6 @@ def solar_altitude_deg(latitude_deg: float, declination_deg: float, hour_angle_d
 
 
 def solar_azimuth_variable(latitude_deg: float, declination_deg: float, hour_angle_deg_value: float) -> float:
-    # IEEE 738 Eq. (29)
     denominator = (
         _sin_deg(latitude_deg) * _cos_deg(hour_angle_deg_value)
         - _cos_deg(latitude_deg) * _tan_deg(declination_deg)
@@ -137,17 +132,14 @@ def solar_azimuth_variable(latitude_deg: float, declination_deg: float, hour_ang
 
 
 def solar_azimuth_constant(hour_angle_deg_value: float, chi: float) -> float:
-    # IEEE 738 Table 3
     if -180.0 <= hour_angle_deg_value < 0.0:
         return 0.0 if chi >= 0.0 else 180.0
-    if 0.0 <= hour_angle_deg_value < 180.0:
+    if 0.0 <= hour_angle_deg_value <= 180.0:
         return 180.0 if chi >= 0.0 else 360.0
-    # edge fallback
     return 180.0 if chi >= 0.0 else 360.0
 
 
 def solar_azimuth_deg(latitude_deg: float, declination_deg: float, hour_angle_deg_value: float) -> tuple[float, float, float]:
-    # IEEE 738 Eq. (28)
     chi = solar_azimuth_variable(latitude_deg, declination_deg, hour_angle_deg_value)
     c = solar_azimuth_constant(hour_angle_deg_value, chi)
     zc = c + _atan_deg(chi)
@@ -155,16 +147,14 @@ def solar_azimuth_deg(latitude_deg: float, declination_deg: float, hour_angle_de
 
 
 def angle_of_incidence_deg(solar_altitude_deg_value: float, solar_azimuth_deg_value: float, line_azimuth_deg: float) -> float:
-    # IEEE 738 Eq. (24)
     cosine_term = _cos_deg(solar_altitude_deg_value) * _cos_deg(solar_azimuth_deg_value - line_azimuth_deg)
     cosine_term = max(-1.0, min(1.0, cosine_term))
     return math.degrees(math.acos(cosine_term))
 
 
-def sea_level_solar_intensity_w_per_m2(solar_altitude_deg_value: float, atmosphere_type: str) -> float:
-    # IEEE 738 Eq. (30), SI
+def sea_level_solar_intensity_w_per_ft2(solar_altitude_deg_value: float, atmosphere_type: str) -> float:
     atmosphere = atmosphere_type.strip().lower()
-    coeffs = CLEAR_AIR_COEFFICIENTS_SI if atmosphere == "clear" else INDUSTRIAL_AIR_COEFFICIENTS_SI
+    coeffs = CLEAR_AIR_COEFFICIENTS_US if atmosphere == "clear" else INDUSTRIAL_AIR_COEFFICIENTS_US
 
     hc = solar_altitude_deg_value
     qs = (
@@ -179,23 +169,14 @@ def sea_level_solar_intensity_w_per_m2(solar_altitude_deg_value: float, atmosphe
     return max(qs, 0.0)
 
 
-def solar_elevation_correction(elevation_m: float) -> float:
-    # IEEE 738 Eq. (32), SI
-    a = ELEVATION_CORRECTION_COEFFICIENTS_SI["A"]
-    b = ELEVATION_CORRECTION_COEFFICIENTS_SI["B"]
-    c = ELEVATION_CORRECTION_COEFFICIENTS_SI["C"]
-    return a + b * elevation_m + c * (elevation_m ** 2)
+def solar_elevation_correction_from_m(elevation_m: float) -> float:
+    # use IEEE elevation correction with elevation in meters
+    return 1.0 + 1.148e-4 * elevation_m - 1.108e-8 * (elevation_m ** 2)
 
 
-def corrected_solar_intensity_w_per_m2(sea_level_qs: float, elevation_m: float) -> tuple[float, float]:
-    # IEEE 738 Eq. (31)
-    ksolar = solar_elevation_correction(elevation_m)
-    return ksolar * sea_level_qs, ksolar
-
-
-def solar_heat_gain_w_per_m(
+def solar_heat_gain(
     absorptivity: float,
-    diameter_m: float,
+    diameter_ft: float,
     latitude_deg: float,
     line_azimuth_deg: float,
     input_date: date,
@@ -209,9 +190,11 @@ def solar_heat_gain_w_per_m(
     delta = solar_declination_deg(n)
     hc = solar_altitude_deg(latitude_deg, delta, omega)
 
-    # nighttime
+    ksolar = solar_elevation_correction_from_m(elevation_m)
+
     if hc <= 0.0:
         return {
+            "qs_w_per_ft": 0.0,
             "qs_w_per_m": 0.0,
             "n_day": n,
             "hour_decimal": time_hours,
@@ -222,24 +205,26 @@ def solar_heat_gain_w_per_m(
             "chi": 0.0,
             "c_constant": 0.0,
             "theta_deg": 0.0,
+            "qs_sea_level_w_per_ft2": 0.0,
             "qs_sea_level_w_per_m2": 0.0,
+            "qse_w_per_ft2": 0.0,
             "qse_w_per_m2": 0.0,
-            "ksolar": solar_elevation_correction(elevation_m),
-            "projected_area_m2_per_m": diameter_m,
+            "ksolar": ksolar,
+            "projected_area_ft2_per_ft": diameter_ft,
+            "projected_area_m2_per_m": diameter_ft / FT_PER_M,
             "atmosphere_type": atmosphere_type,
         }
 
     zc, chi, c_constant = solar_azimuth_deg(latitude_deg, delta, omega)
     theta = angle_of_incidence_deg(hc, zc, line_azimuth_deg)
 
-    qs_sea = sea_level_solar_intensity_w_per_m2(hc, atmosphere_type)
-    qse, ksolar = corrected_solar_intensity_w_per_m2(qs_sea, elevation_m)
-
-    projected_area = diameter_m  # A' for a cylinder per unit length
-    qs_w_per_m = max(absorptivity, 0.0) * qse * _sin_deg(theta) * projected_area
+    qs_sea_level_ft2 = sea_level_solar_intensity_w_per_ft2(hc, atmosphere_type)
+    qse_ft2 = qs_sea_level_ft2 * ksolar
+    qs_w_per_ft = max(absorptivity, 0.0) * qse_ft2 * _sin_deg(theta) * diameter_ft
 
     return {
-        "qs_w_per_m": max(qs_w_per_m, 0.0),
+        "qs_w_per_ft": max(qs_w_per_ft, 0.0),
+        "qs_w_per_m": max(qs_w_per_ft, 0.0) * FT_PER_M,
         "n_day": n,
         "hour_decimal": time_hours,
         "omega_deg": omega,
@@ -249,9 +234,12 @@ def solar_heat_gain_w_per_m(
         "chi": chi,
         "c_constant": c_constant,
         "theta_deg": theta,
-        "qs_sea_level_w_per_m2": qs_sea,
-        "qse_w_per_m2": qse,
+        "qs_sea_level_w_per_ft2": qs_sea_level_ft2,
+        "qs_sea_level_w_per_m2": qs_sea_level_ft2 * W_PER_FT2_TO_W_PER_M2,
+        "qse_w_per_ft2": qse_ft2,
+        "qse_w_per_m2": qse_ft2 * W_PER_FT2_TO_W_PER_M2,
         "ksolar": ksolar,
-        "projected_area_m2_per_m": projected_area,
+        "projected_area_ft2_per_ft": diameter_ft,
+        "projected_area_m2_per_m": diameter_ft / FT_PER_M,
         "atmosphere_type": atmosphere_type,
     }
