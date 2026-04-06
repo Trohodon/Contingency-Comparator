@@ -5,6 +5,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 from core.conductor_loader import load_conductor_database, ConductorDatabase
+from core.ieee738 import calculate_steady_state_rating
 from models.conductor import Conductor
 
 
@@ -13,8 +14,8 @@ class LineRatingApp(tk.Tk):
         super().__init__()
 
         self.title("Line Rating Calculator")
-        self.geometry("1100x700")
-        self.minsize(950, 600)
+        self.geometry("1200x760")
+        self.minsize(1000, 640)
 
         self.database: ConductorDatabase | None = None
         self.selected_conductor: Conductor | None = None
@@ -64,16 +65,18 @@ class LineRatingApp(tk.Tk):
             left_frame,
             columns=("property", "value"),
             show="headings",
-            height=25
+            height=18
         )
         self.data_tree.heading("property", text="Property")
         self.data_tree.heading("value", text="Value")
-        self.data_tree.column("property", width=260, anchor="w")
-        self.data_tree.column("value", width=220, anchor="w")
+        self.data_tree.column("property", width=280, anchor="w")
+        self.data_tree.column("value", width=240, anchor="w")
         self.data_tree.pack(fill="both", expand=True)
 
-        right_frame = ttk.LabelFrame(middle_frame, text="Rating Inputs (Next Step)", padding=10)
+        right_frame = ttk.LabelFrame(middle_frame, text="Rating Inputs", padding=10)
         right_frame.pack(side="right", fill="y", padx=(5, 0))
+
+        default_target = "125"
 
         self.input_vars = {
             "ambient_temp_c": tk.StringVar(value="25"),
@@ -81,7 +84,7 @@ class LineRatingApp(tk.Tk):
             "wind_angle_deg": tk.StringVar(value="90"),
             "elevation_m": tk.StringVar(value="0"),
             "solar_w_m2": tk.StringVar(value="1000"),
-            "target_temp_c": tk.StringVar(value="75"),
+            "target_temp_c": tk.StringVar(value=default_target),
             "emissivity": tk.StringVar(value="0.5"),
             "absorptivity": tk.StringVar(value="0.5"),
         }
@@ -110,9 +113,17 @@ class LineRatingApp(tk.Tk):
         self.calculate_button = ttk.Button(
             right_frame,
             text="Calculate Rating",
-            command=self._calculate_placeholder
+            command=self._calculate_rating
         )
         self.calculate_button.grid(row=len(input_rows) + 1, column=0, columnspan=2, sticky="ew")
+
+        result_frame = ttk.LabelFrame(self, text="Calculation Result", padding=10)
+        result_frame.pack(fill="both", expand=False, padx=10, pady=(0, 10))
+
+        self.result_text = tk.Text(result_frame, height=12, wrap="word")
+        self.result_text.pack(fill="both", expand=True)
+        self.result_text.insert("1.0", "Results will appear here after calculation.\n")
+        self.result_text.configure(state="disabled")
 
         self.status_var = tk.StringVar(value="Ready.")
         status_bar = ttk.Label(self, textvariable=self.status_var, relief="sunken", anchor="w", padding=6)
@@ -185,6 +196,11 @@ class LineRatingApp(tk.Tk):
 
         if conductor.max_temp_c is not None:
             self.input_vars["target_temp_c"].set(str(conductor.max_temp_c))
+        else:
+            # user preference for ACSR
+            if family.strip().upper() == "ACSR":
+                self.input_vars["target_temp_c"].set("125")
+
         if conductor.emissivity is not None:
             self.input_vars["emissivity"].set(str(conductor.emissivity))
         if conductor.absorptivity is not None:
@@ -216,7 +232,7 @@ class LineRatingApp(tk.Tk):
             ("GMR (ft)", conductor.gmr_ft),
             ("Xa @60Hz (ohm/mile)", conductor.xa_60hz_ohm_per_mile),
             ("Capacitive Reactance", conductor.capacitive_reactance),
-            ("Ampacity @75C (amp)", conductor.ampacity_75c_amp),
+            ("Southwire Ampacity @75C (amp)", conductor.ampacity_75c_amp),
             ("Emissivity", conductor.emissivity),
             ("Absorptivity", conductor.absorptivity),
             ("Max Temp (C)", conductor.max_temp_c),
@@ -231,12 +247,103 @@ class LineRatingApp(tk.Tk):
         for item in self.data_tree.get_children():
             self.data_tree.delete(item)
 
-    def _calculate_placeholder(self) -> None:
+    def _set_result_text(self, text: str) -> None:
+        self.result_text.configure(state="normal")
+        self.result_text.delete("1.0", "end")
+        self.result_text.insert("1.0", text)
+        self.result_text.configure(state="disabled")
+
+    def _get_float_input(self, key: str, label: str) -> float:
+        raw = self.input_vars[key].get().strip()
+        try:
+            return float(raw)
+        except ValueError:
+            raise ValueError(f"Invalid numeric value for {label}: '{raw}'")
+
+    def _calculate_rating(self) -> None:
         if self.selected_conductor is None:
             messagebox.showwarning("No Conductor", "Please select a conductor first.")
             return
 
-        messagebox.showinfo(
-            "Coming Next",
-            f"GUI and conductor loading are working.\n\nSelected conductor: {self.selected_conductor.code_word}"
-        )
+        try:
+            ambient_temp_c = self._get_float_input("ambient_temp_c", "Ambient Temp")
+            wind_speed_mps = self._get_float_input("wind_speed_mps", "Wind Speed")
+            wind_angle_deg = self._get_float_input("wind_angle_deg", "Wind Angle")
+            elevation_m = self._get_float_input("elevation_m", "Elevation")
+            solar_w_m2 = self._get_float_input("solar_w_m2", "Solar")
+            target_temp_c = self._get_float_input("target_temp_c", "Target Temp")
+            emissivity = self._get_float_input("emissivity", "Emissivity")
+            absorptivity = self._get_float_input("absorptivity", "Absorptivity")
+
+            result = calculate_steady_state_rating(
+                conductor=self.selected_conductor,
+                ambient_temp_c=ambient_temp_c,
+                wind_speed_mps=wind_speed_mps,
+                wind_angle_deg=wind_angle_deg,
+                elevation_m=elevation_m,
+                solar_w_per_m2=solar_w_m2,
+                target_temp_c=target_temp_c,
+                emissivity=emissivity,
+                absorptivity=absorptivity,
+            )
+
+            southwire_75c = self.selected_conductor.ampacity_75c_amp
+
+            result_lines = [
+                f"Conductor: {self.selected_conductor.code_word}",
+                f"Family: {self.selected_conductor.family}",
+                "",
+                "Inputs",
+                f"  Ambient Temp (C): {ambient_temp_c:.3f}",
+                f"  Wind Speed (m/s): {wind_speed_mps:.3f}",
+                f"  Wind Angle (deg): {wind_angle_deg:.3f}",
+                f"  Elevation (m): {elevation_m:.3f}",
+                f"  Solar (W/m^2): {solar_w_m2:.3f}",
+                f"  Target Temp (C): {target_temp_c:.3f}",
+                f"  Emissivity: {emissivity:.3f}",
+                f"  Absorptivity: {absorptivity:.3f}",
+                "",
+                "Calculated Rating",
+                f"  Ampacity (A): {result['amps']:.3f}",
+                "",
+                "Intermediate Values",
+                f"  Diameter (in): {result['diameter_in']:.6f}",
+                f"  Diameter (m): {result['diameter_m']:.6f}",
+                f"  Resistance (ohm/mile): {result['resistance_ohm_per_mile']:.6f}",
+                f"  Resistance (ohm/m): {result['resistance_ohm_per_m']:.10f}",
+                f"  qc total (W/m): {result['qc_w_per_m']:.6f}",
+                f"  qcn natural (W/m): {result['qcn_w_per_m']:.6f}",
+                f"  qc1 forced low-Re (W/m): {result['qc1_w_per_m']:.6f}",
+                f"  qc2 forced high-Re (W/m): {result['qc2_w_per_m']:.6f}",
+                f"  qr radiated (W/m): {result['qr_w_per_m']:.6f}",
+                f"  qs solar (W/m): {result['qs_w_per_m']:.6f}",
+                f"  Mean film temp (C): {result['tfilm_c']:.6f}",
+                f"  Air density (kg/m^3): {result['rho_f']:.6f}",
+                f"  Air viscosity (kg/m-s): {result['mu_f']:.10f}",
+                f"  Air conductivity (W/m-C): {result['k_f']:.8f}",
+                f"  Reynolds number: {result['n_re']:.6f}",
+                f"  Wind direction factor: {result['k_angle']:.6f}",
+            ]
+
+            if southwire_75c is not None:
+                result_lines.extend([
+                    "",
+                    "Reference",
+                    f"  Southwire Ampacity @75C (A): {southwire_75c:.3f}",
+                    "  Note: this reference value is not expected to match unless the weather assumptions also match the source assumptions.",
+                ])
+
+            result_lines.extend([
+                "",
+                "Notes",
+                "  This version uses IEEE 738 convection, radiation, and steady-state heat balance.",
+                "  Solar heating here is simplified from user-entered irradiance rather than the full IEEE sun-position model.",
+                "  Resistance is interpolated from the resistance values in ConData.xlsx.",
+            ])
+
+            self._set_result_text("\n".join(result_lines))
+            self.status_var.set(f"Calculated steady-state rating for {self.selected_conductor.code_word}")
+
+        except Exception as exc:
+            messagebox.showerror("Calculation Error", str(exc))
+            self.status_var.set("Calculation failed.")
