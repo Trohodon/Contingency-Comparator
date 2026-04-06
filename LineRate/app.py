@@ -146,9 +146,25 @@ class LineRatingApp(tk.Tk):
         status_bar = ttk.Label(self, textvariable=self.status_var, relief="sunken", anchor="w", padding=6)
         status_bar.pack(fill="x", side="bottom")
 
+    def _find_data_source(self) -> str:
+        resources_dir = "Resources"
+        preferred_files = [
+            "ConSizes.xlsx",
+            "ConData.xlsx",
+        ]
+
+        for filename in preferred_files:
+            path = os.path.join(resources_dir, filename)
+            if os.path.exists(path):
+                return path
+
+        raise FileNotFoundError(
+            "No conductor workbook found in Resources. Expected ConSizes.xlsx or ConData.xlsx."
+        )
+
     def _load_database(self) -> None:
         try:
-            filepath = os.path.join("Resources", "ConData.xlsx")
+            filepath = self._find_data_source()
             self.database = load_conductor_database(filepath)
 
             families = self.database.get_families()
@@ -166,7 +182,10 @@ class LineRatingApp(tk.Tk):
             self._populate_conductors(first_family)
 
             total_count = sum(len(self.database.get_conductors(f)) for f in families)
-            self.status_var.set(f"Loaded {total_count} conductors from {len(families)} sheet(s).")
+            source_name = os.path.basename(filepath)
+            self.status_var.set(
+                f"Loaded {total_count} conductors from {len(families)} family/families using {source_name}."
+            )
 
         except Exception as exc:
             messagebox.showerror("Load Error", str(exc))
@@ -188,7 +207,7 @@ class LineRatingApp(tk.Tk):
             self.conductor_var.set("")
             self.selected_conductor = None
             self._clear_data_tree()
-            self.status_var.set(f"No conductors found in sheet '{family}'.")
+            self.status_var.set(f"No conductors found in family '{family}'.")
 
     def _on_family_changed(self, _event=None) -> None:
         family = self.family_var.get().strip()
@@ -248,7 +267,7 @@ class LineRatingApp(tk.Tk):
             ("GMR (ft)", conductor.gmr_ft),
             ("Xa @60Hz (ohm/mile)", conductor.xa_60hz_ohm_per_mile),
             ("Capacitive Reactance", conductor.capacitive_reactance),
-            ("Southwire Ampacity @75C (amp)", conductor.ampacity_75c_amp),
+            ("Southwire Ampacity / STDOL", conductor.ampacity_75c_amp),
             ("Emissivity", conductor.emissivity),
             ("Absorptivity", conductor.absorptivity),
             ("Max Temp (C)", conductor.max_temp_c),
@@ -312,12 +331,14 @@ class LineRatingApp(tk.Tk):
                 atmosphere_type=atmosphere_type,
             )
 
+            source_ref = os.path.basename(self.database.source_path) if self.database and self.database.source_path else "unknown"
             southwire_75c = self.selected_conductor.ampacity_75c_amp
             solar = result["solar"]
 
             result_lines = [
                 f"Conductor: {self.selected_conductor.code_word}",
                 f"Family: {self.selected_conductor.family}",
+                f"Source Workbook: {source_ref}",
                 "",
                 "Inputs",
                 f"  Ambient Temp (C): {ambient_temp_c:.3f}",
@@ -347,21 +368,11 @@ class LineRatingApp(tk.Tk):
                 f"  qr radiated (W/ft): {result['qr_w_per_ft']:.6f}",
                 f"  qs solar (W/ft): {result['qs_w_per_ft']:.6f}",
                 "",
-                "Heat Terms (converted SI display)",
-                f"  qc total (W/m): {result['qc_w_per_m']:.6f}",
-                f"  qcn natural (W/m): {result['qcn_w_per_m']:.6f}",
-                f"  qc1 forced low-Re (W/m): {result['qc1_w_per_m']:.6f}",
-                f"  qc2 forced high-Re (W/m): {result['qc2_w_per_m']:.6f}",
-                f"  qr radiated (W/m): {result['qr_w_per_m']:.6f}",
-                f"  qs solar (W/m): {result['qs_w_per_m']:.6f}",
-                "",
                 "Resistance / Air Properties",
                 f"  Diameter (in): {result['diameter_in']:.6f}",
                 f"  Diameter (ft): {result['diameter_ft']:.9f}",
-                f"  Diameter (m): {result['diameter_m']:.9f}",
                 f"  Resistance (ohm/mile): {result['resistance_ohm_per_mile']:.6f}",
                 f"  Resistance (ohm/ft): {result['resistance_ohm_per_ft']:.10f}",
-                f"  Resistance (ohm/m): {result['resistance_ohm_per_m']:.10f}",
                 f"  Mean film temp (C): {result['tfilm_c']:.6f}",
                 f"  Air density (lb/ft^3): {result['rho_f_lb_per_ft3']:.8f}",
                 f"  Air viscosity (lb/ft-s): {result['mu_f_lb_per_ft_s']:.10f}",
@@ -380,20 +391,15 @@ class LineRatingApp(tk.Tk):
                 f"  Solar azimuth Zc (deg): {solar['zc_deg']:.6f}",
                 f"  Incidence angle θ (deg): {solar['theta_deg']:.6f}",
                 f"  Sea-level solar intensity (W/ft^2): {solar['qs_sea_level_w_per_ft2']:.6f}",
-                f"  Sea-level solar intensity (W/m^2): {solar['qs_sea_level_w_per_m2']:.6f}",
-                f"  Elevation correction Ksolar: {solar['ksolar']:.6f}",
                 f"  Corrected solar intensity (W/ft^2): {solar['qse_w_per_ft2']:.6f}",
-                f"  Corrected solar intensity (W/m^2): {solar['qse_w_per_m2']:.6f}",
-                f"  Projected area A' (ft^2/ft): {solar['projected_area_ft2_per_ft']:.9f}",
-                f"  Projected area A' (m^2/m): {solar['projected_area_m2_per_m']:.9f}",
+                f"  Elevation correction Ksolar: {solar['ksolar']:.6f}",
             ]
 
             if southwire_75c is not None:
                 result_lines.extend([
                     "",
                     "Reference",
-                    f"  Southwire Ampacity @75C (A): {southwire_75c:.3f}",
-                    "  This reference value will only match when the same temperature and weather assumptions are used.",
+                    f"  Ampacity / STDOL from workbook: {southwire_75c:.3f}",
                 ])
 
             self._set_result_text("\n".join(result_lines))
