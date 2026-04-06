@@ -6,6 +6,7 @@ from tkinter import ttk, messagebox
 
 from core.conductor_loader import load_conductor_database, ConductorDatabase
 from core.ieee738 import calculate_steady_state_rating
+from core.solar_ieee738 import parse_date_input, parse_time_input
 from models.conductor import Conductor
 
 
@@ -14,8 +15,8 @@ class LineRatingApp(tk.Tk):
         super().__init__()
 
         self.title("Line Rating Calculator")
-        self.geometry("1200x760")
-        self.minsize(1000, 640)
+        self.geometry("1260x820")
+        self.minsize(1080, 700)
 
         self.database: ConductorDatabase | None = None
         self.selected_conductor: Conductor | None = None
@@ -69,24 +70,26 @@ class LineRatingApp(tk.Tk):
         )
         self.data_tree.heading("property", text="Property")
         self.data_tree.heading("value", text="Value")
-        self.data_tree.column("property", width=280, anchor="w")
-        self.data_tree.column("value", width=240, anchor="w")
+        self.data_tree.column("property", width=290, anchor="w")
+        self.data_tree.column("value", width=250, anchor="w")
         self.data_tree.pack(fill="both", expand=True)
 
         right_frame = ttk.LabelFrame(middle_frame, text="Rating Inputs", padding=10)
         right_frame.pack(side="right", fill="y", padx=(5, 0))
 
-        default_target = "125"
-
         self.input_vars = {
-            "ambient_temp_c": tk.StringVar(value="25"),
-            "wind_speed_mps": tk.StringVar(value="0.61"),
-            "wind_angle_deg": tk.StringVar(value="90"),
-            "elevation_m": tk.StringVar(value="0"),
-            "solar_w_m2": tk.StringVar(value="1000"),
-            "target_temp_c": tk.StringVar(value=default_target),
+            "ambient_temp_c": tk.StringVar(value="40"),
+            "wind_speed_mps": tk.StringVar(value="2.0013"),
+            "wind_angle_deg": tk.StringVar(value="45"),
+            "elevation_m": tk.StringVar(value="500"),
+            "target_temp_c": tk.StringVar(value="125"),
             "emissivity": tk.StringVar(value="0.5"),
             "absorptivity": tk.StringVar(value="0.5"),
+            "latitude_deg": tk.StringVar(value="32.234"),
+            "line_azimuth_deg": tk.StringVar(value="0"),
+            "date_text": tk.StringVar(value="7/1/20"),
+            "time_text": tk.StringVar(value="7:00 AM"),
+            "atmosphere_type": tk.StringVar(value="clear"),
         }
 
         input_rows = [
@@ -94,10 +97,13 @@ class LineRatingApp(tk.Tk):
             ("Wind Speed (m/s)", "wind_speed_mps"),
             ("Wind Angle (deg)", "wind_angle_deg"),
             ("Elevation (m)", "elevation_m"),
-            ("Solar (W/m^2)", "solar_w_m2"),
             ("Target Temp (C)", "target_temp_c"),
             ("Emissivity", "emissivity"),
             ("Absorptivity", "absorptivity"),
+            ("Latitude (deg)", "latitude_deg"),
+            ("Line Azimuth (deg)", "line_azimuth_deg"),
+            ("Date", "date_text"),
+            ("Time", "time_text"),
         ]
 
         for row_idx, (label, key) in enumerate(input_rows):
@@ -106,8 +112,19 @@ class LineRatingApp(tk.Tk):
                 row=row_idx, column=1, sticky="w", pady=4
             )
 
+        atmosphere_row = len(input_rows)
+        ttk.Label(right_frame, text="Atmosphere").grid(row=atmosphere_row, column=0, sticky="w", pady=4, padx=(0, 8))
+        atmosphere_combo = ttk.Combobox(
+            right_frame,
+            textvariable=self.input_vars["atmosphere_type"],
+            state="readonly",
+            values=["clear", "industrial"],
+            width=15
+        )
+        atmosphere_combo.grid(row=atmosphere_row, column=1, sticky="w", pady=4)
+
         ttk.Separator(right_frame, orient="horizontal").grid(
-            row=len(input_rows), column=0, columnspan=2, sticky="ew", pady=12
+            row=atmosphere_row + 1, column=0, columnspan=2, sticky="ew", pady=12
         )
 
         self.calculate_button = ttk.Button(
@@ -115,12 +132,12 @@ class LineRatingApp(tk.Tk):
             text="Calculate Rating",
             command=self._calculate_rating
         )
-        self.calculate_button.grid(row=len(input_rows) + 1, column=0, columnspan=2, sticky="ew")
+        self.calculate_button.grid(row=atmosphere_row + 2, column=0, columnspan=2, sticky="ew")
 
         result_frame = ttk.LabelFrame(self, text="Calculation Result", padding=10)
         result_frame.pack(fill="both", expand=False, padx=10, pady=(0, 10))
 
-        self.result_text = tk.Text(result_frame, height=12, wrap="word")
+        self.result_text = tk.Text(result_frame, height=14, wrap="word")
         self.result_text.pack(fill="both", expand=True)
         self.result_text.insert("1.0", "Results will appear here after calculation.\n")
         self.result_text.configure(state="disabled")
@@ -197,7 +214,6 @@ class LineRatingApp(tk.Tk):
         if conductor.max_temp_c is not None:
             self.input_vars["target_temp_c"].set(str(conductor.max_temp_c))
         else:
-            # user preference for ACSR
             if family.strip().upper() == "ACSR":
                 self.input_vars["target_temp_c"].set("125")
 
@@ -270,10 +286,15 @@ class LineRatingApp(tk.Tk):
             wind_speed_mps = self._get_float_input("wind_speed_mps", "Wind Speed")
             wind_angle_deg = self._get_float_input("wind_angle_deg", "Wind Angle")
             elevation_m = self._get_float_input("elevation_m", "Elevation")
-            solar_w_m2 = self._get_float_input("solar_w_m2", "Solar")
             target_temp_c = self._get_float_input("target_temp_c", "Target Temp")
             emissivity = self._get_float_input("emissivity", "Emissivity")
             absorptivity = self._get_float_input("absorptivity", "Absorptivity")
+            latitude_deg = self._get_float_input("latitude_deg", "Latitude")
+            line_azimuth_deg = self._get_float_input("line_azimuth_deg", "Line Azimuth")
+
+            input_date = parse_date_input(self.input_vars["date_text"].get())
+            input_time = parse_time_input(self.input_vars["time_text"].get())
+            atmosphere_type = self.input_vars["atmosphere_type"].get().strip().lower()
 
             result = calculate_steady_state_rating(
                 conductor=self.selected_conductor,
@@ -281,13 +302,18 @@ class LineRatingApp(tk.Tk):
                 wind_speed_mps=wind_speed_mps,
                 wind_angle_deg=wind_angle_deg,
                 elevation_m=elevation_m,
-                solar_w_per_m2=solar_w_m2,
                 target_temp_c=target_temp_c,
                 emissivity=emissivity,
                 absorptivity=absorptivity,
+                latitude_deg=latitude_deg,
+                line_azimuth_deg=line_azimuth_deg,
+                input_date=input_date,
+                input_time=input_time,
+                atmosphere_type=atmosphere_type,
             )
 
             southwire_75c = self.selected_conductor.ampacity_75c_amp
+            solar = result["solar"]
 
             result_lines = [
                 f"Conductor: {self.selected_conductor.code_word}",
@@ -298,31 +324,52 @@ class LineRatingApp(tk.Tk):
                 f"  Wind Speed (m/s): {wind_speed_mps:.3f}",
                 f"  Wind Angle (deg): {wind_angle_deg:.3f}",
                 f"  Elevation (m): {elevation_m:.3f}",
-                f"  Solar (W/m^2): {solar_w_m2:.3f}",
                 f"  Target Temp (C): {target_temp_c:.3f}",
                 f"  Emissivity: {emissivity:.3f}",
                 f"  Absorptivity: {absorptivity:.3f}",
+                f"  Latitude (deg): {latitude_deg:.3f}",
+                f"  Line Azimuth (deg): {line_azimuth_deg:.3f}",
+                f"  Date: {input_date.isoformat()}",
+                f"  Time: {input_time.strftime('%H:%M:%S')}",
+                f"  Atmosphere: {atmosphere_type}",
                 "",
                 "Calculated Rating",
-                f"  Ampacity (A): {result['amps']:.3f}",
+                f"  Ampacity (A): {result['amps']:.6f}",
                 "",
-                "Intermediate Values",
-                f"  Diameter (in): {result['diameter_in']:.6f}",
-                f"  Diameter (m): {result['diameter_m']:.6f}",
-                f"  Resistance (ohm/mile): {result['resistance_ohm_per_mile']:.6f}",
-                f"  Resistance (ohm/m): {result['resistance_ohm_per_m']:.10f}",
+                "Heat Terms",
                 f"  qc total (W/m): {result['qc_w_per_m']:.6f}",
                 f"  qcn natural (W/m): {result['qcn_w_per_m']:.6f}",
                 f"  qc1 forced low-Re (W/m): {result['qc1_w_per_m']:.6f}",
                 f"  qc2 forced high-Re (W/m): {result['qc2_w_per_m']:.6f}",
                 f"  qr radiated (W/m): {result['qr_w_per_m']:.6f}",
                 f"  qs solar (W/m): {result['qs_w_per_m']:.6f}",
+                "",
+                "Resistance / Air Properties",
+                f"  Diameter (in): {result['diameter_in']:.6f}",
+                f"  Diameter (m): {result['diameter_m']:.6f}",
+                f"  Resistance (ohm/mile): {result['resistance_ohm_per_mile']:.6f}",
+                f"  Resistance (ohm/m): {result['resistance_ohm_per_m']:.10f}",
                 f"  Mean film temp (C): {result['tfilm_c']:.6f}",
                 f"  Air density (kg/m^3): {result['rho_f']:.6f}",
                 f"  Air viscosity (kg/m-s): {result['mu_f']:.10f}",
                 f"  Air conductivity (W/m-C): {result['k_f']:.8f}",
                 f"  Reynolds number: {result['n_re']:.6f}",
                 f"  Wind direction factor: {result['k_angle']:.6f}",
+                "",
+                "IEEE 738 Solar Details",
+                f"  Day of year N: {solar['n_day']}",
+                f"  Decimal hour: {solar['hour_decimal']:.6f}",
+                f"  Hour angle ω (deg): {solar['omega_deg']:.6f}",
+                f"  Solar declination δ (deg): {solar['delta_deg']:.6f}",
+                f"  Solar altitude Hc (deg): {solar['hc_deg']:.6f}",
+                f"  Solar azimuth variable χ: {solar['chi']:.6f}",
+                f"  Solar azimuth constant C (deg): {solar['c_constant']:.6f}",
+                f"  Solar azimuth Zc (deg): {solar['zc_deg']:.6f}",
+                f"  Incidence angle θ (deg): {solar['theta_deg']:.6f}",
+                f"  Sea-level solar intensity Qs (W/m^2): {solar['qs_sea_level_w_per_m2']:.6f}",
+                f"  Elevation correction Ksolar: {solar['ksolar']:.6f}",
+                f"  Corrected solar intensity Qse (W/m^2): {solar['qse_w_per_m2']:.6f}",
+                f"  Projected area A' (m^2/m): {solar['projected_area_m2_per_m']:.6f}",
             ]
 
             if southwire_75c is not None:
@@ -330,16 +377,8 @@ class LineRatingApp(tk.Tk):
                     "",
                     "Reference",
                     f"  Southwire Ampacity @75C (A): {southwire_75c:.3f}",
-                    "  Note: this reference value is not expected to match unless the weather assumptions also match the source assumptions.",
+                    "  This reference value will only match when the same temperature and weather assumptions are used.",
                 ])
-
-            result_lines.extend([
-                "",
-                "Notes",
-                "  This version uses IEEE 738 convection, radiation, and steady-state heat balance.",
-                "  Solar heating here is simplified from user-entered irradiance rather than the full IEEE sun-position model.",
-                "  Resistance is interpolated from the resistance values in ConData.xlsx.",
-            ])
 
             self._set_result_text("\n".join(result_lines))
             self.status_var.set(f"Calculated steady-state rating for {self.selected_conductor.code_word}")
