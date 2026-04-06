@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 from typing import Optional
 
+from core.solar_ieee738 import solar_heat_gain_w_per_m
 from models.conductor import Conductor
 
 
@@ -19,13 +20,6 @@ def ohm_per_mile_to_ohm_per_meter(value: float) -> float:
 
 
 def interpolate_resistance_ohm_per_mile(conductor: Conductor, temp_c: float) -> float:
-    """
-    Interpolate conductor AC resistance using available points in the conductor table.
-    Preference order:
-    1) AC 25C / 50C / 75C with piecewise linear interpolation (and edge extrapolation)
-    2) AC 25C / 75C
-    3) DC 20C fallback (constant)
-    """
     points = []
 
     if conductor.ac_res_25c_ohm_per_mile is not None:
@@ -74,35 +68,29 @@ def mean_film_temperature(ts_c: float, ta_c: float) -> float:
 
 
 def air_dynamic_viscosity(tfilm_c: float) -> float:
-    # IEEE 738 Eq. (13), SI
     return (1.458e-6 * (tfilm_c + 273.0) ** 1.5) / (tfilm_c + 383.4)
 
 
 def air_density(tfilm_c: float, elevation_m: float) -> float:
-    # IEEE 738 Eq. (15), SI
     numerator = 1.293 - 1.525e-4 * elevation_m + 6.379e-9 * (elevation_m ** 2)
     denominator = 1.0 + 0.00367 * tfilm_c
     return numerator / denominator
 
 
 def air_thermal_conductivity(tfilm_c: float) -> float:
-    # IEEE 738 Eq. (17), SI
     return 2.424e-2 + 7.477e-5 * tfilm_c - 4.407e-9 * (tfilm_c ** 2)
 
 
 def wind_direction_factor(phi_deg: float) -> float:
-    # IEEE 738 Eq. (19), using phi = angle between wind and conductor axis
     phi = math.radians(phi_deg)
     return 1.194 - math.cos(phi) + 0.194 * math.cos(2.0 * phi) + 0.368 * math.sin(2.0 * phi)
 
 
 def reynolds_number(diameter_m: float, rho_f: float, wind_mps: float, mu_f: float) -> float:
-    # IEEE 738 Eq. (11)
     return diameter_m * rho_f * wind_mps / mu_f
 
 
 def natural_convection_loss(ts_c: float, ta_c: float, diameter_m: float, rho_f: float) -> float:
-    # IEEE 738 Eq. (7), SI
     delta_t = max(ts_c - ta_c, 0.0)
     if delta_t <= 0.0:
         return 0.0
@@ -119,7 +107,6 @@ def forced_convection_losses(
     mu_f: float,
     k_f: float,
 ) -> tuple[float, float]:
-    # IEEE 738 Eq. (9) and Eq. (10), SI
     delta_t = max(ts_c - ta_c, 0.0)
     if delta_t <= 0.0 or wind_mps <= 0.0:
         return 0.0, 0.0
@@ -157,19 +144,7 @@ def convection_loss(ts_c: float, ta_c: float, diameter_m: float, wind_mps: float
 
 
 def radiated_heat_loss(ts_c: float, ta_c: float, diameter_m: float, emissivity: float) -> float:
-    # IEEE 738 Eq. (21), SI
     return 17.8 * diameter_m * emissivity * ((((ts_c + 273.0) / 100.0) ** 4) - (((ta_c + 273.0) / 100.0) ** 4))
-
-
-def solar_heat_gain_simple(solar_w_per_m2: float, absorptivity: float, diameter_m: float) -> float:
-    """
-    Simplified solar gain using user-input irradiance:
-        qs = alpha * G * A'
-    where projected area per unit length A' = D0.
-    This uses the user's entered solar irradiance directly rather than the full
-    IEEE 738 sun-position model.
-    """
-    return max(solar_w_per_m2, 0.0) * max(absorptivity, 0.0) * diameter_m
 
 
 def calculate_steady_state_rating(
@@ -178,13 +153,20 @@ def calculate_steady_state_rating(
     wind_speed_mps: float,
     wind_angle_deg: float,
     elevation_m: float,
-    solar_w_per_m2: float,
     target_temp_c: float,
     emissivity: Optional[float] = None,
     absorptivity: Optional[float] = None,
+    latitude_deg: Optional[float] = None,
+    line_azimuth_deg: Optional[float] = None,
+    input_date=None,
+    input_time=None,
+    atmosphere_type: str = "clear",
 ) -> dict:
     if conductor.od_in is None:
         raise ValueError(f"Conductor '{conductor.code_word}' is missing OD_IN.")
+
+    if latitude_deg is None or line_azimuth_deg is None or input_date is None or input_time is None:
+        raise ValueError("Latitude, line azimuth, date, and time are required for the full IEEE 738 solar model.")
 
     eps = emissivity if emissivity is not None else (conductor.emissivity if conductor.emissivity is not None else 0.5)
     alpha = absorptivity if absorptivity is not None else (conductor.absorptivity if conductor.absorptivity is not None else 0.5)
@@ -209,11 +191,18 @@ def calculate_steady_state_rating(
         emissivity=eps,
     )
 
-    qs = solar_heat_gain_simple(
-        solar_w_per_m2=solar_w_per_m2,
+    solar = solar_heat_gain_w_per_m(
         absorptivity=alpha,
         diameter_m=diameter_m,
+        latitude_deg=latitude_deg,
+        line_azimuth_deg=line_azimuth_deg,
+        input_date=input_date,
+        input_time=input_time,
+        elevation_m=elevation_m,
+        atmosphere_type=atmosphere_type,
     )
+
+    qs = solar["qs_w_per_m"]
 
     net = convection["qc"] + qr - qs
     amps = math.sqrt(net / resistance_ohm_per_m) if net > 0.0 and resistance_ohm_per_m > 0.0 else 0.0
@@ -225,7 +214,6 @@ def calculate_steady_state_rating(
         "wind_speed_mps": wind_speed_mps,
         "wind_angle_deg": wind_angle_deg,
         "elevation_m": elevation_m,
-        "solar_w_per_m2": solar_w_per_m2,
         "diameter_m": diameter_m,
         "diameter_in": conductor.od_in,
         "resistance_ohm_per_mile": resistance_ohm_per_mile,
@@ -245,4 +233,5 @@ def calculate_steady_state_rating(
         "k_angle": convection["k_angle"],
         "emissivity": eps,
         "absorptivity": alpha,
+        "solar": solar,
     }
