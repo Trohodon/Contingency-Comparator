@@ -30,6 +30,7 @@ class LineRatingApp(tk.Tk):
         top_frame.pack(fill="x")
 
         ttk.Label(top_frame, text="Conductor Family:").grid(row=0, column=0, sticky="w", padx=(0, 8))
+
         self.family_combo = ttk.Combobox(
             top_frame,
             textvariable=self.family_var,
@@ -40,6 +41,7 @@ class LineRatingApp(tk.Tk):
         self.family_combo.bind("<<ComboboxSelected>>", self._on_family_changed)
 
         ttk.Label(top_frame, text="Conductor:").grid(row=0, column=2, sticky="w", padx=(0, 8))
+
         self.conductor_combo = ttk.Combobox(
             top_frame,
             textvariable=self.conductor_var,
@@ -125,12 +127,18 @@ class LineRatingApp(tk.Tk):
             self.family_combo["values"] = families
 
             if not families:
-                self.status_var.set("No conductor sheets found in ConData.xlsx.")
+                self.family_var.set("")
+                self.conductor_combo["values"] = []
+                self._clear_data_tree()
+                self.status_var.set("No conductor sheets found.")
                 return
 
-            self.family_var.set(families[0])
-            self._populate_conductors(families[0])
-            self.status_var.set(f"Loaded conductor database from {filepath}")
+            first_family = families[0]
+            self.family_var.set(first_family)
+            self._populate_conductors(first_family)
+
+            total_count = sum(len(self.database.get_conductors(f)) for f in families)
+            self.status_var.set(f"Loaded {total_count} conductors from {len(families)} sheet(s).")
 
         except Exception as exc:
             messagebox.showerror("Load Error", str(exc))
@@ -141,7 +149,8 @@ class LineRatingApp(tk.Tk):
             return
 
         conductors = self.database.get_conductors(family)
-        names = [c.code_word for c in conductors]
+        names = [c.code_word for c in conductors if c.code_word]
+
         self.conductor_combo["values"] = names
 
         if names:
@@ -149,7 +158,9 @@ class LineRatingApp(tk.Tk):
             self._display_selected_conductor(family, names[0])
         else:
             self.conductor_var.set("")
+            self.selected_conductor = None
             self._clear_data_tree()
+            self.status_var.set(f"No conductors found in sheet '{family}'.")
 
     def _on_family_changed(self, _event=None) -> None:
         family = self.family_var.get().strip()
@@ -169,6 +180,7 @@ class LineRatingApp(tk.Tk):
         self._clear_data_tree()
 
         if conductor is None:
+            self.status_var.set(f"Could not find conductor '{code_word}' in '{family}'.")
             return
 
         if conductor.max_temp_c is not None:
@@ -224,9 +236,7 @@ class LineRatingApp(tk.Tk):
             messagebox.showwarning("No Conductor", "Please select a conductor first.")
             return
 
-        msg = (
-            f"Next step will calculate IEEE 738 rating for:\n\n"
-            f"{self.selected_conductor.code_word}\n\n"
-            f"For now, the GUI and data loading are working."
+        messagebox.showinfo(
+            "Coming Next",
+            f"GUI and conductor loading are working.\n\nSelected conductor: {self.selected_conductor.code_word}"
         )
-        messagebox.showinfo("Coming Next", msg)
