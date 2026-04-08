@@ -30,6 +30,8 @@ class Conductor:
     ac_res_25c_ohm_per_mile: Optional[float] = None
     ac_res_50c_ohm_per_mile: Optional[float] = None
     ac_res_75c_ohm_per_mile: Optional[float] = None
+    ac_res_200c_ohm_per_mile: Optional[float] = None
+    stdol: Optional[float] = None
 
     gmr_ft: Optional[float] = None
     xa_60hz_ohm_per_mile: Optional[float] = None
