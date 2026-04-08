@@ -107,8 +107,7 @@ def hour_angle_deg(local_time_hours: float) -> float:
 
 
 def solar_declination_deg(day_num: int) -> float:
-    # workbook-style coefficient
-    return 23.4583 * _sin_deg(((284.0 + day_num) / 365.0) * 360.0)
+    return 23.45 * _sin_deg(((284.0 + day_num) / 365.0) * 360.0)
 
 
 def solar_altitude_deg(latitude_deg: float, declination_deg: float, hour_angle_deg_value: float) -> float:
@@ -170,7 +169,6 @@ def sea_level_solar_intensity_w_per_ft2(solar_altitude_deg_value: float, atmosph
 
 
 def solar_elevation_correction_from_m(elevation_m: float) -> float:
-    # use IEEE elevation correction with elevation in meters
     return 1.0 + 1.148e-4 * elevation_m - 1.108e-8 * (elevation_m ** 2)
 
 
@@ -220,7 +218,7 @@ def solar_heat_gain(
 
     qs_sea_level_ft2 = sea_level_solar_intensity_w_per_ft2(hc, atmosphere_type)
     qse_ft2 = qs_sea_level_ft2 * ksolar
-    qs_w_per_ft = max(absorptivity, 0.0) * qse_ft2 * _sin_deg(theta) * diameter_ft
+    qs_w_per_ft = absorptivity * qse_ft2 * _sin_deg(theta) * diameter_ft
 
     return {
         "qs_w_per_ft": max(qs_w_per_ft, 0.0),
