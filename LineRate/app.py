@@ -149,6 +149,7 @@ class LineRatingApp(tk.Tk):
     def _find_data_source(self) -> str:
         resources_dir = "Resources"
         preferred_files = [
+            "ConductorData.xlsx",
             "ConSizes.xlsx",
             "ConData.xlsx",
         ]
@@ -159,7 +160,7 @@ class LineRatingApp(tk.Tk):
                 return path
 
         raise FileNotFoundError(
-            "No conductor workbook found in Resources. Expected ConSizes.xlsx or ConData.xlsx."
+            "No conductor workbook found in Resources. Expected ConductorData.xlsx, ConSizes.xlsx, or ConData.xlsx."
         )
 
     def _load_database(self) -> None:
@@ -267,7 +268,7 @@ class LineRatingApp(tk.Tk):
             ("GMR (ft)", conductor.gmr_ft),
             ("Xa @60Hz (ohm/mile)", conductor.xa_60hz_ohm_per_mile),
             ("Capacitive Reactance", conductor.capacitive_reactance),
-            ("Southwire Ampacity / STDOL", conductor.ampacity_75c_amp),
+            ("Ampacity / RATEB / STDOL", conductor.ampacity_75c_amp),
             ("Emissivity", conductor.emissivity),
             ("Absorptivity", conductor.absorptivity),
             ("Max Temp (C)", conductor.max_temp_c),
@@ -332,7 +333,7 @@ class LineRatingApp(tk.Tk):
             )
 
             source_ref = os.path.basename(self.database.source_path) if self.database and self.database.source_path else "unknown"
-            southwire_75c = self.selected_conductor.ampacity_75c_amp
+            workbook_reference = self.selected_conductor.ampacity_75c_amp
             solar = result["solar"]
 
             result_lines = [
@@ -395,11 +396,11 @@ class LineRatingApp(tk.Tk):
                 f"  Elevation correction Ksolar: {solar['ksolar']:.6f}",
             ]
 
-            if southwire_75c is not None:
+            if workbook_reference is not None:
                 result_lines.extend([
                     "",
                     "Reference",
-                    f"  Ampacity / STDOL from workbook: {southwire_75c:.3f}",
+                    f"  Workbook reference ampacity field: {workbook_reference:.3f}",
                 ])
 
             self._set_result_text("\n".join(result_lines))
