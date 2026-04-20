@@ -5,54 +5,83 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 
 
-def txt_to_xlsx():
-    root = tk.Tk()
-    root.withdraw()
+class TxtToExcelGUI:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("TXT to Excel Converter")
+        self.root.geometry("500x200")
 
-    txt_path = filedialog.askopenfilename(
-        title="Select text file",
-        filetypes=[("Text files", "*.txt"), ("All files", "*.*")]
-    )
+        self.txt_path = ""
+        self.save_path = ""
 
-    if not txt_path:
-        return
+        # Select TXT file
+        tk.Button(root, text="Select TXT File", command=self.select_txt).pack(pady=10)
+        self.txt_label = tk.Label(root, text="No file selected")
+        self.txt_label.pack()
 
-    try:
-        with open(txt_path, "r", encoding="utf-8") as f:
-            lines = [line.strip() for line in f if line.strip()]
+        # Select Save Location
+        tk.Button(root, text="Choose Save Location", command=self.select_save).pack(pady=10)
+        self.save_label = tk.Label(root, text="No save location selected")
+        self.save_label.pack()
 
-        if not lines:
-            messagebox.showerror("Error", "The selected file is empty.")
+        # Convert Button
+        tk.Button(root, text="Convert to Excel", command=self.convert, bg="green", fg="white").pack(pady=20)
+
+    def select_txt(self):
+        path = filedialog.askopenfilename(
+            title="Select text file",
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")]
+        )
+        if path:
+            self.txt_path = path
+            self.txt_label.config(text=os.path.basename(path))
+
+    def select_save(self):
+        path = filedialog.asksaveasfilename(
+            title="Save Excel file",
+            defaultextension=".xlsx",
+            filetypes=[("Excel files", "*.xlsx")]
+        )
+        if path:
+            self.save_path = path
+            self.save_label.config(text=os.path.basename(path))
+
+    def convert(self):
+        if not self.txt_path:
+            messagebox.showerror("Error", "Select a TXT file first.")
             return
 
-        # First non-empty line is treated as header
-        headers = re.split(r"\s+", lines[0])
+        if not self.save_path:
+            messagebox.showerror("Error", "Choose where to save the Excel file.")
+            return
 
-        # Remaining lines are data rows
-        rows = []
-        for line in lines[1:]:
-            parts = re.split(r"\s+", line)
+        try:
+            with open(self.txt_path, "r", encoding="utf-8") as f:
+                lines = [line.strip() for line in f if line.strip()]
 
-            # If row is shorter than header, pad it
-            if len(parts) < len(headers):
-                parts += [""] * (len(headers) - len(parts))
+            headers = re.split(r"\s+", lines[0])
+            rows = []
 
-            # If row is longer than header, trim it
-            elif len(parts) > len(headers):
-                parts = parts[:len(headers)]
+            for line in lines[1:]:
+                parts = re.split(r"\s+", line)
 
-            rows.append(parts)
+                if len(parts) < len(headers):
+                    parts += [""] * (len(headers) - len(parts))
+                elif len(parts) > len(headers):
+                    parts = parts[:len(headers)]
 
-        df = pd.DataFrame(rows, columns=headers)
+                rows.append(parts)
 
-        output_path = os.path.splitext(txt_path)[0] + ".xlsx"
-        df.to_excel(output_path, index=False)
+            df = pd.DataFrame(rows, columns=headers)
+            df.to_excel(self.save_path, index=False)
 
-        messagebox.showinfo("Success", f"Excel file created:\n{output_path}")
+            messagebox.showinfo("Success", "File converted successfully.")
 
-    except Exception as e:
-        messagebox.showerror("Error", f"Failed to convert file.\n\n{e}")
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
 
 
 if __name__ == "__main__":
-    txt_to_xlsx()
+    root = tk.Tk()
+    app = TxtToExcelGUI(root)
+    root.mainloop()
